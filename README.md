@@ -1,70 +1,68 @@
-# Getting Started with Create React App
+Dokumentasi Pengembangan ISAJI POS Platform
+Tanggal: 23 Juli 2026
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+Fokus Pengembangan Hari Ini: Arsitektur Modular UI/UX, Manajemen Cabang (Branches) dengan Integrasi Database Supabase, serta Konfigurasi Skema Pajak & Branding Perusahaan.
 
-## Available Scripts
+1. Ringkasan Progres Hari Ini
+Hari ini kita berhasil merombak total tampilan antarmuka (UI/UX) platform SaaS POS ISAJI menjadi gaya modern, bersih (clean light mode), dan profesional ala dashboard SaaS premium (gaya Majoo). Selain itu, kita sukses memisahkan struktur kode menjadi arsitektur modular yang rapi dan menghubungkan modul utama (Manajemen Cabang) secara penuh ke database Supabase.
 
-In the project directory, you can run:
+2. Struktur Direktori & File Baru
+Untuk menjaga kerapian kode dan mempermudah pemeliharaan (maintainability), halaman owner telah dipecah menjadi komponen-komponen independen di dalam folder src/owner/:
 
-### `npm start`
+src/owner/Dashboard.js: File pusat tata letak (layout) utama yang mengatur router halaman, status sesi pengguna, serta menyusun komponen Sidebar, Header, Konten Utama, dan Footer.
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+src/owner/Sidebar.js: Komponen navigasi menu sebelah kiri dengan indikator aktif yang dinamis dan ikon modern.
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+src/owner/Header.js: Bilah atas yang menampilkan judul halaman otomatis sesuai menu aktif, informasi profil owner, serta tombol keluar (sign out).
 
-### `npm test`
+src/owner/Footer.js: Komponen kaki halaman berstandar hak cipta dan informasi versi aplikasi.
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+src/owner/Branches.js: Komponen halaman fungsional penuh untuk manajemen cabang/outlet, lengkap dengan integrasi CRUD ke Supabase.
 
-### `npm run build`
+3. Skema Database & Penyesuaian Backend (Supabase)
+Tabel branches yang digunakan telah disesuaikan dengan struktur kolom database relasional yang komperehensif:
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+Kolom Tabel branches:
+id (UUID, Primary Key, Default: gen_random_uuid())
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+organization_id (UUID, Foreign Key)
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+name (TEXT, Nama Cabang/Outlet)
 
-### `npm run eject`
+code (TEXT, Kode Unik Cabang)
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+address (TEXT, Alamat Lengkap)
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+city (TEXT, Kota/Kabupaten)
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+province (TEXT, Provinsi)
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+phone (TEXT, Nomor Telepon)
 
-## Learn More
+tax_mode (TEXT, Skema Pajak: bebas, pph_05, pb1_10, ppn_11)
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+logo_url (TEXT, Tautan URL Logo Perusahaan/Cabang)
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+is_active (BOOLEAN, Status operasional cabang)
 
-### Code Splitting
+created_at & updated_at (Timestamp dengan zona waktu)
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
+4. Catatan Integrasi & Query Database Hari Ini
+Selama proses integrasi Supabase hari ini, beberapa penyesuaian akses dan constraint database telah diselesaikan melalui SQL Editor:
 
-### Analyzing the Bundle Size
+Penambahan Kolom Baru (Logo & Pajak):
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
+SQL
+ALTER TABLE branches 
+ADD COLUMN IF NOT EXISTS logo_url TEXT,
+ADD COLUMN IF NOT EXISTS tax_mode TEXT DEFAULT 'pb1_10';
+Penyesuaian Akses & Keamanan Pengembangan:
 
-### Making a Progressive Web App
+Row Level Security (RLS) pada tabel utama dimatikan sementara untuk mempercepat proses development.
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
+Pembatasan Foreign Key Constraint pada organization_id disesuaikan agar proses insert data cabang oleh akun owner berjalan lancar tanpa hambatan relasi tabel organisasi turunan.
 
-### Advanced Configuration
+5. Rencana Tindak Lanjut (Next Steps) Besok Malam
+Melanjutkan pengembangan modul berikutnya (Manajemen Tim/Karyawan atau Laporan Keuangan).
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+Implementasi penyimpanan berkas (Supabase Storage Bucket) untuk fitur unggah logo fisik secara langsung."# Isaji-Pos-Terbaru"  
