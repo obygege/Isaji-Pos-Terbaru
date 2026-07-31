@@ -66,3 +66,4 @@ Pembatasan Foreign Key Constraint pada organization_id disesuaikan agar proses i
 Melanjutkan pengembangan modul berikutnya (Manajemen Tim/Karyawan atau Laporan Keuangan).
 
 Implementasi penyimpanan berkas (Supabase Storage Bucket) untuk fitur unggah logo fisik secara langsung."# Isaji-Pos-Terbaru"  
+"# Isaji-Pos-Terbaru"  
