@@ -1,28 +1,74 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import supabase from '../../backend/lib/supabaseClient';
+import { detectUserRole } from '../../backend/lib/roleDetection';
+
+const ROLE_LABEL = {
+    owner: 'Owner', manager: 'Manajer', employee: 'Karyawan', superadmin: 'Super Admin',
+};
 
 function CustomerLoginPage() {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [isLoading, setIsLoading] = useState(false);
+    const [errorMsg, setErrorMsg] = useState('');
+    const [verifyingOAuth, setVerifyingOAuth] = useState(true);
+
+    // Cek role setiap kali halaman ini dibuka -- termasuk saat baru saja
+    // kembali dari redirect OAuth Google (session sudah otomatis ke-set
+    // oleh supabase-js karena detectSessionInUrl: true).
+    useEffect(() => {
+        const verifyExistingSession = async () => {
+            const { data: { session } } = await supabase.auth.getSession();
+
+            if (!session?.user) {
+                setVerifyingOAuth(false);
+                return;
+            }
+
+            const { role } = await detectUserRole(session.user.id);
+            if (role !== 'customer') {
+                await supabase.auth.signOut();
+                setErrorMsg(`Akun ini terdaftar sebagai ${ROLE_LABEL[role]}, bukan akun member/customer. Gunakan halaman login khusus ${ROLE_LABEL[role]}.`);
+                setVerifyingOAuth(false);
+                return;
+            }
+
+            // Session valid & memang customer -> lanjutkan ke halaman sebelumnya
+            window.history.back();
+        };
+        verifyExistingSession();
+    }, []);
 
     const handleEmailLogin = async (e) => {
         e.preventDefault();
         setIsLoading(true);
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        setErrorMsg('');
+
+        const { data: authData, error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) {
-            alert("Gagal Login: " + error.message);
-        } else {
-            // Arahkan kembali ke halaman sebelumnya atau ke menu utama
-            window.history.back();
+            setErrorMsg('Gagal login: ' + error.message);
+            setIsLoading(false);
+            return;
         }
+
+        // Tolak kalau akun ini sebenarnya akun Owner/Manajer/Karyawan/Super Admin
+        const { role } = await detectUserRole(authData.user.id);
+        if (role !== 'customer') {
+            await supabase.auth.signOut();
+            setErrorMsg(`Akun ini terdaftar sebagai ${ROLE_LABEL[role]}, bukan akun member/customer. Gunakan halaman login khusus ${ROLE_LABEL[role]}.`);
+            setIsLoading(false);
+            return;
+        }
+
+        // Arahkan kembali ke halaman sebelumnya atau ke menu utama
+        window.history.back();
         setIsLoading(false);
     };
 
     const handleGoogleLogin = async () => {
         const { error } = await supabase.auth.signInWithOAuth({
             provider: 'google',
-            options: { redirectTo: window.location.origin }
+            options: { redirectTo: `${window.location.origin}/customer-login` }
         });
         if (error) alert("Error Google Login: " + error.message);
     };
@@ -33,6 +79,14 @@ function CustomerLoginPage() {
         const text = encodeURIComponent("Halo Admin, saya lupa password akun member aplikasi. Mohon bantuannya untuk reset.");
         window.open(`https://wa.me/${phone}?text=${text}`, '_blank');
     };
+
+    if (verifyingOAuth) {
+        return (
+            <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4 font-sans">
+                <p className="text-sm font-bold text-gray-400">Memverifikasi sesi...</p>
+            </div>
+        );
+    }
 
     return (
         <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4 font-sans">
@@ -67,6 +121,9 @@ function CustomerLoginPage() {
                 </div>
 
                 {/* FORM EMAIL & PASSWORD */}
+                {errorMsg && (
+                    <div className="bg-red-50 text-red-600 text-xs font-bold p-3 rounded-xl mb-4 border border-red-100">{errorMsg}</div>
+                )}
                 <form onSubmit={handleEmailLogin} className="space-y-4">
                     <div>
                         <label className="block text-xs font-bold text-gray-500 mb-1.5">Alamat Email</label>

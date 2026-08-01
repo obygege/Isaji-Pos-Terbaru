@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import supabase from './backend/lib/supabaseClient';
+import { detectUserRole } from './backend/lib/roleDetection';
 
 function Login({ onNavigate }) {
     const [currentSlide, setCurrentSlide] = useState(0);
@@ -42,39 +43,29 @@ function Login({ onNavigate }) {
             const userId = authData.user.id;
             sessionStorage.removeItem('loginPassword');
 
-            // 2. CEK APAKAH DIA OWNER
-            const { data: orgData } = await supabase
-                .from('organizations')
-                .select('id')
-                .or(`id.eq.${userId},owner_id.eq.${userId}`)
-                .limit(1);
+            // 2. Deteksi role sebenarnya dari akun ini, lalu tolak kalau bukan owner/manajer
+            const { role } = await detectUserRole(userId);
 
-            if (orgData && orgData.length > 0) {
+            if (role === 'owner') {
                 onNavigate('dashboard'); // Lempar ke Owner Dashboard
                 return;
             }
-
-            // 3. CEK APAKAH DIA MANAJER CABANG
-            const { data: empData } = await supabase
-                .from('employees')
-                .select('position')
-                .eq('user_id', userId)
-                .limit(1);
-
-            if (empData && empData.length > 0) {
-                const position = empData[0].position;
-                if (position === 'manajer') {
-                    onNavigate('manager-dashboard'); // Lempar ke Manager Dashboard khusus
-                    return;
-                } else {
-                    alert("Akses web ini khusus untuk Owner dan Manajer Cabang.");
-                    await supabase.auth.signOut();
-                    onNavigate('login');
-                    return;
-                }
+            if (role === 'manager') {
+                onNavigate('manager-dashboard'); // Lempar ke Manager Dashboard khusus
+                return;
+            }
+            if (role === 'superadmin') {
+                await supabase.auth.signOut();
+                throw new Error('Akun ini adalah akun Super Admin. Silakan login lewat Command Center, bukan halaman ini.');
+            }
+            if (role === 'employee') {
+                await supabase.auth.signOut();
+                throw new Error('Akun ini terdaftar sebagai karyawan biasa, bukan Owner/Manajer. Gunakan login khusus karyawan.');
             }
 
-            throw new Error("Akun ini tidak terdaftar memiliki hak akses backoffice.");
+            // role === 'customer' atau tidak terdaftar sama sekali
+            await supabase.auth.signOut();
+            throw new Error('Akun ini tidak terdaftar memiliki hak akses backoffice.');
 
         } catch (error) {
             setErrorMsg(error.message);
