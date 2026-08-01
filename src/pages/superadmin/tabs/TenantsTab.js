@@ -11,7 +11,15 @@ export default function TenantsTab({ searchQuery }) {
 
     const fetchTenants = useCallback(async () => {
         const { data, error } = await supabase.from('organizations').select('*').order('created_at', { ascending: false });
-        if (!error && data) setOrgs(data);
+        if (!error && data) {
+            // Hitung jumlah cabang per tenant (kolom branches.organization_id)
+            const { data: branchRows } = await supabase.from('branches').select('organization_id');
+            const branchCountMap = {};
+            (branchRows || []).forEach(b => {
+                branchCountMap[b.organization_id] = (branchCountMap[b.organization_id] || 0) + 1;
+            });
+            setOrgs(data.map(org => ({ ...org, branch_count: branchCountMap[org.id] || 0 })));
+        }
         setLoading(false);
     }, []);
 
@@ -63,6 +71,9 @@ export default function TenantsTab({ searchQuery }) {
                             <tr className="bg-gray-50 text-gray-500 text-[10px] uppercase tracking-widest border-b border-gray-100">
                                 <th className="p-4 font-black">Tenant Name</th>
                                 <th className="p-4 font-black">Subdomain URL</th>
+                                <th className="p-4 font-black">Plan</th>
+                                <th className="p-4 font-black">Cabang</th>
+                                <th className="p-4 font-black">Trial / Expiry</th>
                                 <th className="p-4 font-black">Status</th>
                                 <th className="p-4 font-black text-right">Actions</th>
                             </tr>
@@ -75,6 +86,17 @@ export default function TenantsTab({ searchQuery }) {
                                         <div className="text-[10px] font-normal text-gray-400 mt-0.5">{org.id}</div>
                                     </td>
                                     <td className="p-4 text-blue-600 font-mono text-xs">{org.subdomain}.isajipos.com</td>
+                                    <td className="p-4">
+                                        <span className="text-xs font-bold capitalize text-gray-700">{org.subscription_plan || '-'}</span>
+                                    </td>
+                                    <td className="p-4 text-xs font-bold text-gray-700">{org.branch_count}</td>
+                                    <td className="p-4 text-xs text-gray-500">
+                                        {org.trial_ends_at
+                                            ? `Trial s/d ${new Date(org.trial_ends_at).toLocaleDateString('id-ID')}`
+                                            : org.subscription_expires_at
+                                                ? `Exp ${new Date(org.subscription_expires_at).toLocaleDateString('id-ID')}`
+                                                : '-'}
+                                    </td>
                                     <td className="p-4">
                                         {org.is_active ?
                                             <span className="flex items-center gap-1.5 text-xs font-bold text-green-600"><div className="w-1.5 h-1.5 rounded-full bg-green-500"></div> Active</span> :
