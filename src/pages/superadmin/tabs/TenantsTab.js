@@ -26,7 +26,7 @@ export default function TenantsTab({ searchQuery }) {
     useEffect(() => { fetchTenants(); }, [fetchTenants]);
 
     const toggleTenantStatus = async (id, currentStatus) => {
-        if (window.confirm(`Yakin ingin ${currentStatus ? 'Suspend' : 'Aktifkan'} tenant ini?`)) {
+        if (window.confirm(`Yakin ingin ${currentStatus ? 'Nonaktifkan' : 'Aktifkan'} tenant ini?`)) {
             await supabase.from('organizations').update({ is_active: !currentStatus }).eq('id', id);
             fetchTenants();
         }
@@ -61,7 +61,7 @@ export default function TenantsTab({ searchQuery }) {
         <div className="animate-fade-in relative">
             <div className="bg-white border border-gray-200 rounded-3xl shadow-sm overflow-hidden">
                 <div className="px-6 py-5 border-b border-gray-100 flex justify-between items-center bg-gray-50/50">
-                    <h2 className="text-sm font-black text-gray-900 uppercase">Tenant Directory</h2>
+                    <h2 className="text-sm font-black text-gray-900 uppercase">Daftar Tenant</h2>
                     <button onClick={() => setShowModal(true)} className="px-4 py-2 bg-gray-900 text-white text-xs font-bold rounded-lg hover:bg-gray-800 transition-colors">+ Tambah Tenant</button>
                 </div>
 
@@ -69,13 +69,13 @@ export default function TenantsTab({ searchQuery }) {
                     <table className="w-full text-left border-collapse">
                         <thead>
                             <tr className="bg-gray-50 text-gray-500 text-[10px] uppercase tracking-widest border-b border-gray-100">
-                                <th className="p-4 font-black">Tenant Name</th>
+                                <th className="p-4 font-black">Nama Tenant</th>
                                 <th className="p-4 font-black">Subdomain URL</th>
                                 <th className="p-4 font-black">Plan</th>
                                 <th className="p-4 font-black">Cabang</th>
                                 <th className="p-4 font-black">Trial / Expiry</th>
                                 <th className="p-4 font-black">Status</th>
-                                <th className="p-4 font-black text-right">Actions</th>
+                                <th className="p-4 font-black text-right">Aksi</th>
                             </tr>
                         </thead>
                         <tbody className="text-sm divide-y divide-gray-100">
@@ -99,13 +99,13 @@ export default function TenantsTab({ searchQuery }) {
                                     </td>
                                     <td className="p-4">
                                         {org.is_active ?
-                                            <span className="flex items-center gap-1.5 text-xs font-bold text-green-600"><div className="w-1.5 h-1.5 rounded-full bg-green-500"></div> Active</span> :
-                                            <span className="flex items-center gap-1.5 text-xs font-bold text-red-600"><div className="w-1.5 h-1.5 rounded-full bg-red-500"></div> Suspended</span>
+                                            <span className="flex items-center gap-1.5 text-xs font-bold text-green-600"><div className="w-1.5 h-1.5 rounded-full bg-green-500"></div> Aktif</span> :
+                                            <span className="flex items-center gap-1.5 text-xs font-bold text-red-600"><div className="w-1.5 h-1.5 rounded-full bg-red-500"></div> Nonaktif</span>
                                         }
                                     </td>
                                     <td className="p-4 text-right space-x-2">
                                         <button onClick={() => toggleTenantStatus(org.id, org.is_active)} className="text-[10px] font-bold px-3 py-1.5 border border-gray-200 rounded-md hover:bg-gray-100">
-                                            {org.is_active ? 'Suspend' : 'Activate'}
+                                            {org.is_active ? 'Nonaktifkan' : 'Aktifkan'}
                                         </button>
                                     </td>
                                 </tr>

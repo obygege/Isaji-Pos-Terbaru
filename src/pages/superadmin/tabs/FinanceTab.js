@@ -38,15 +38,15 @@ export default function FinanceTab() {
             <h2 className="text-lg font-black text-gray-900">Omset Transaksi Real (Seluruh Tenant)</h2>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-3xl">
                 <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-6">
-                    <h4 className="text-xs font-bold text-gray-500 uppercase">Gross Sales</h4>
+                    <h4 className="text-xs font-bold text-gray-500 uppercase">Total Penjualan</h4>
                     <p className="text-xl font-black text-gray-900 mt-2">Rp {realTransactions.grossSales.toLocaleString('id-ID')}</p>
                 </div>
                 <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-6">
-                    <h4 className="text-xs font-bold text-gray-500 uppercase">Net Profit</h4>
+                    <h4 className="text-xs font-bold text-gray-500 uppercase">Laba Bersih</h4>
                     <p className="text-xl font-black text-green-600 mt-2">Rp {realTransactions.netProfit.toLocaleString('id-ID')}</p>
                 </div>
                 <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-6">
-                    <h4 className="text-xs font-bold text-gray-500 uppercase">Total Orders</h4>
+                    <h4 className="text-xs font-bold text-gray-500 uppercase">Total Order</h4>
                     <p className="text-xl font-black text-gray-900 mt-2">{realTransactions.totalOrders.toLocaleString('id-ID')}</p>
                 </div>
             </div>
@@ -57,7 +57,7 @@ export default function FinanceTab() {
                 <div className="flex flex-col gap-6">
                     <div className="flex justify-between items-center pb-4 border-b border-gray-100">
                         <div>
-                            <h4 className="font-bold text-gray-900">Gross Subscription Revenue</h4>
+                            <h4 className="font-bold text-gray-900">Pendapatan Langganan Kotor</h4>
                             <p className="text-xs text-gray-500">Omset kotor bulanan (Rp 150.000 / tenant premium)</p>
                         </div>
                         <span className="text-xl font-black text-gray-900">Rp {grossRevenue.toLocaleString('id-ID')}</span>

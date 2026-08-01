@@ -1,22 +1,39 @@
 import React, { useState } from 'react';
+import supabase from '../../backend/lib/supabaseClient';
+import { getVerifiedSuperAdminSession } from './superAdminAuth';
 
 function SuperAdminLogin() {
-    const [passkey, setPasskey] = useState('');
-    const [error, setError] = useState(false);
+    const [email, setEmail] = useState('');
+    const [password, setPassword] = useState('');
+    const [error, setError] = useState('');
+    const [loading, setLoading] = useState(false);
 
-    const handleLogin = (e) => {
+    const handleLogin = async (e) => {
         e.preventDefault();
-        // GANTI PASSKEY INI DENGAN KODE RAHASIA ANDA
-        const SECRET_PASSKEY = process.env.REACT_APP_SUPERADMIN_PASSKEY;
+        setError('');
+        setLoading(true);
 
-        if (passkey === SECRET_PASSKEY) {
-            localStorage.setItem('is_superadmin', 'true');
-            window.location.href = '/superadmin/dashboard';
-        } else {
-            setError(true);
-            setPasskey('');
-            setTimeout(() => setError(false), 2000);
+        // 1. Login pakai Supabase Auth asli (email + password)
+        const { error: authError } = await supabase.auth.signInWithPassword({ email, password });
+
+        if (authError) {
+            setError('Email atau password salah.');
+            setLoading(false);
+            return;
         }
+
+        // 2. Verifikasi ulang ke tabel `superadmins` -- login berhasil bukan
+        //    berarti otomatis superadmin, harus terdaftar di tabel itu juga.
+        const session = await getVerifiedSuperAdminSession();
+
+        if (!session) {
+            setError('Akun ini tidak memiliki akses Super Admin.');
+            await supabase.auth.signOut();
+            setLoading(false);
+            return;
+        }
+
+        window.location.href = '/superadmin/dashboard';
     };
 
     return (
@@ -34,22 +51,38 @@ function SuperAdminLogin() {
                     <p className="text-xs text-slate-400 mt-1 uppercase tracking-widest">Isaji POS Super Admin</p>
                 </div>
 
-                <form onSubmit={handleLogin} className="space-y-6">
+                <form onSubmit={handleLogin} className="space-y-5">
                     <div>
-                        <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Secret Passkey</label>
+                        <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Email</label>
+                        <input
+                            type="email"
+                            value={email}
+                            onChange={(e) => setEmail(e.target.value)}
+                            placeholder="superadmin@isajipos.com"
+                            className="w-full px-5 py-4 bg-black/30 border border-slate-700 rounded-xl text-white placeholder-slate-600 outline-none focus:border-amber-500 transition-all"
+                            autoFocus
+                            required
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Password</label>
                         <input
                             type="password"
-                            value={passkey}
-                            onChange={(e) => setPasskey(e.target.value)}
-                            placeholder="Enter classified key..."
-                            className={`w-full px-5 py-4 bg-black/30 border ${error ? 'border-red-500' : 'border-slate-700'} rounded-xl text-white placeholder-slate-600 outline-none focus:border-amber-500 transition-all text-center tracking-widest`}
-                            autoFocus
+                            value={password}
+                            onChange={(e) => setPassword(e.target.value)}
+                            placeholder="••••••••"
+                            className={`w-full px-5 py-4 bg-black/30 border ${error ? 'border-red-500' : 'border-slate-700'} rounded-xl text-white placeholder-slate-600 outline-none focus:border-amber-500 transition-all`}
+                            required
                         />
-                        {error && <p className="text-red-400 text-xs text-center mt-2 animate-pulse">Access Denied. Invalid Passkey.</p>}
+                        {error && <p className="text-red-400 text-xs text-center mt-2 animate-pulse">{error}</p>}
                     </div>
 
-                    <button type="submit" className="w-full py-4 bg-gradient-to-r from-amber-500 to-orange-600 text-black font-black rounded-xl hover:shadow-[0_0_20px_rgba(245,158,11,0.4)] transition-all active:scale-95">
-                        AUTHENTICATE
+                    <button
+                        type="submit"
+                        disabled={loading}
+                        className="w-full py-4 bg-gradient-to-r from-amber-500 to-orange-600 text-black font-black rounded-xl hover:shadow-[0_0_20px_rgba(245,158,11,0.4)] transition-all active:scale-95 disabled:opacity-50"
+                    >
+                        {loading ? 'MEMVERIFIKASI...' : 'AUTHENTICATE'}
                     </button>
                 </form>
             </div>

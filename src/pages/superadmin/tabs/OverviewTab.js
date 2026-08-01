@@ -35,21 +35,21 @@ export default function OverviewTab() {
         fetchRealStats();
     }, []);
 
-    if (loading) return <div className="text-isaji-orange font-bold text-center">Loading Data...</div>;
+    if (loading) return <div className="text-isaji-orange font-bold text-center">Memuat Data...</div>;
 
     return (
         <div className="space-y-6 animate-fade-in">
             <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                 <div className="bg-white border border-gray-200 p-6 rounded-2xl shadow-sm">
                     <div className="flex justify-between items-start mb-4">
-                        <h3 className="text-gray-500 text-xs font-bold uppercase">Total Tenants</h3>
+                        <h3 className="text-gray-500 text-xs font-bold uppercase">Total Tenant</h3>
                         <div className="p-2 bg-blue-50 text-blue-600 rounded-lg"><Icon path="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></div>
                     </div>
                     <div className="text-3xl font-black text-gray-900">{stats.total}</div>
                 </div>
                 <div className="bg-white border border-gray-200 p-6 rounded-2xl shadow-sm">
                     <div className="flex justify-between items-start mb-4">
-                        <h3 className="text-gray-500 text-xs font-bold uppercase">Active Subs</h3>
+                        <h3 className="text-gray-500 text-xs font-bold uppercase">Langganan Aktif</h3>
                         <div className="p-2 bg-green-50 text-green-600 rounded-lg"><Icon path="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" /></div>
                     </div>
                     <div className="text-3xl font-black text-gray-900">{stats.premium}</div>
@@ -83,7 +83,7 @@ export default function OverviewTab() {
 
             {/* Chart Simulation */}
             <div className="bg-white border border-gray-200 p-6 rounded-2xl shadow-sm">
-                <h3 className="text-gray-900 text-sm font-black mb-6">SaaS Growth Trend (Real Database Count)</h3>
+                <h3 className="text-gray-900 text-sm font-black mb-6">Tren Pertumbuhan SaaS (Data Real Database)</h3>
                 <div className="h-24 w-full bg-gray-50 rounded-xl flex items-center justify-center text-xs font-bold text-gray-400 border-2 border-dashed border-gray-200">
                     Sistem membaca {stats.total} tenant dari Database
                 </div>
