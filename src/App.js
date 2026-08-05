@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import supabase from './backend/lib/supabaseClient';
+import { detectUserRole } from './backend/lib/roleDetection';
 
 // Import Halaman Utama (Compro/Pegawai)
 import Home from './Home';
@@ -14,6 +15,7 @@ import ManagerDashboard from './manager/Dashboard';
 // Import Halaman Khusus Pelanggan (Terpisah Total)
 import SelfOrderPage from './customer/SelfOrderPage';
 import CustomerLoginPage from './pages/customer/CustomerLoginPage';
+import CustomerRegisterPage from './pages/customer/CustomerRegisterPage';
 
 // Import Halaman Khusus Super Admin (Command Center)
 import SuperAdminLogin from './pages/superadmin/SuperAdminLogin';
@@ -23,6 +25,7 @@ function App() {
   // Cek jalur URL dari browser (Routing Manual)
   const isSelfOrderRoute = window.location.pathname.includes('/self-order');
   const isCustomerLoginRoute = window.location.pathname.includes('/customer-login');
+  const isCustomerRegisterRoute = window.location.pathname.includes('/customer-register');
 
   // Deteksi jalur Super Admin
   const isSuperAdminLoginRoute = window.location.pathname.includes('/isaji-command-center');
@@ -35,14 +38,14 @@ function App() {
   // Simpan halaman terakhir ke LocalStorage (Hanya untuk Dashboard/Owner)
   useEffect(() => {
     // Jangan simpan state jika sedang di halaman Pelanggan atau Super Admin
-    if (!isSelfOrderRoute && !isCustomerLoginRoute && !isSuperAdminLoginRoute && !isSuperAdminDashboardRoute) {
+    if (!isSelfOrderRoute && !isCustomerLoginRoute && !isCustomerRegisterRoute && !isSuperAdminLoginRoute && !isSuperAdminDashboardRoute) {
       localStorage.setItem('isajiActivePage', activePage);
     }
-  }, [activePage, isSelfOrderRoute, isCustomerLoginRoute, isSuperAdminLoginRoute, isSuperAdminDashboardRoute]);
+  }, [activePage, isSelfOrderRoute, isCustomerLoginRoute, isCustomerRegisterRoute, isSuperAdminLoginRoute, isSuperAdminDashboardRoute]);
 
   useEffect(() => {
     // PENTING: Jika di jalur pelanggan atau Super Admin, ABAIKAN logika Auth Supabase milik pegawai
-    if (isSelfOrderRoute || isCustomerLoginRoute || isSuperAdminLoginRoute || isSuperAdminDashboardRoute) return;
+    if (isSelfOrderRoute || isCustomerLoginRoute || isCustomerRegisterRoute || isSuperAdminLoginRoute || isSuperAdminDashboardRoute) return;
 
     // Pengecekan sesi otomatis saat aplikasi dimuat ulang (Khusus Pegawai/Owner)
     supabase.auth.getSession().then(async ({ data: { session } }) => {
@@ -60,36 +63,25 @@ function App() {
     });
 
     return () => subscription.unsubscribe();
-  }, [activePage, isSelfOrderRoute, isCustomerLoginRoute, isSuperAdminLoginRoute, isSuperAdminDashboardRoute]);
+  }, [activePage, isSelfOrderRoute, isCustomerLoginRoute, isCustomerRegisterRoute, isSuperAdminLoginRoute, isSuperAdminDashboardRoute]);
 
   // Fungsi pintar untuk mendeteksi apakah user adalah Owner atau Manajer
   const determineUserRoleAndNavigate = async (userId) => {
-    // Cek di tabel organizations (Apakah dia Owner?)
-    const { data: orgData } = await supabase
-      .from('organizations')
-      .select('id')
-      .or(`id.eq.${userId},owner_id.eq.${userId}`)
-      .limit(1);
+    const { role } = await detectUserRole(userId);
 
-    if (orgData && orgData.length > 0) {
+    if (role === 'owner') {
       setActivePage('dashboard'); // Dashboard Owner
       return;
     }
-
-    // Cek di tabel employees (Apakah dia Manajer/Staf?)
-    const { data: empData } = await supabase
-      .from('employees')
-      .select('position')
-      .eq('user_id', userId)
-      .limit(1);
-
-    if (empData && empData.length > 0 && empData[0].position === 'manajer') {
+    if (role === 'manager') {
       setActivePage('manager-dashboard'); // Dashboard Manajer
       return;
     }
 
-    // Default Fallback
-    setActivePage('dashboard');
+    // Bukan Owner/Manajer (superadmin, karyawan biasa, atau customer)
+    // -> JANGAN loloskan ke Owner Dashboard. Sign-out & balik ke login.
+    await supabase.auth.signOut();
+    setActivePage('login');
   };
 
   // ==========================================
@@ -112,6 +104,10 @@ function App() {
 
   if (isCustomerLoginRoute) {
     return <CustomerLoginPage />;
+  }
+
+  if (isCustomerRegisterRoute) {
+    return <CustomerRegisterPage />;
   }
 
   // ==========================================

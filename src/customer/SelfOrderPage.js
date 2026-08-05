@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import supabase from '../backend/lib/supabaseClient';
+import { detectUserRole } from '../backend/lib/roleDetection';
 import SelfOrderHeader from '../components/SelfOrderHeader';
 import SelfOrderFooter from '../components/SelfOrderFooter';
 
@@ -36,6 +37,10 @@ function SelfOrderPage() {
     const [customerName, setCustomerName] = useState('');
     const [customerPhone, setCustomerPhone] = useState('');
     const [selectedPayment, setSelectedPayment] = useState('');
+    const [selectedCategory, setSelectedCategory] = useState('Semua');
+
+    // MEMBER YANG SEDANG LOGIN (real Supabase Auth, bukan localStorage)
+    const [customerProfile, setCustomerProfile] = useState(null);
 
     const [showTnCPopup, setShowTnCPopup] = useState(false);
     const [orderResult, setOrderResult] = useState(null);
@@ -103,6 +108,37 @@ function SelfOrderPage() {
 
     useEffect(() => { loadSessionData(); }, [loadSessionData]);
 
+    // 2b. CEK APAKAH PELANGGAN SUDAH LOGIN SEBAGAI MEMBER (real session, bukan localStorage)
+    useEffect(() => {
+        const loadCustomerProfile = async () => {
+            const { data: { session } } = await supabase.auth.getSession();
+            if (!session?.user) return;
+
+            const { role } = await detectUserRole(session.user.id);
+            if (role !== 'customer') return; // jaga-jaga: bukan akun member, abaikan
+
+            const { data: profile } = await supabase
+                .from('customers')
+                .select('full_name, phone, subscribe_promo')
+                .eq('user_id', session.user.id)
+                .maybeSingle();
+
+            if (profile) {
+                setCustomerProfile({ email: session.user.email, ...profile });
+                setCustomerName(profile.full_name || '');
+                setCustomerPhone(profile.phone || '');
+            }
+        };
+        loadCustomerProfile();
+    }, []);
+
+    const handleLogoutMember = async () => {
+        await supabase.auth.signOut();
+        setCustomerProfile(null);
+        setCustomerName('');
+        setCustomerPhone('');
+    };
+
     // 3. LOGIKA KERANJANG & ANIMASI
     const addToCart = (menu) => {
         setCart(prev => {
@@ -128,6 +164,8 @@ function SelfOrderPage() {
     }
 
     const cartItems = Object.values(cart);
+    const menuCategories = ['Semua', ...Array.from(new Set(menus.map(m => m.category).filter(Boolean)))];
+    const filteredMenus = selectedCategory === 'Semua' ? menus : menus.filter(m => m.category === selectedCategory);
     const totalItemsCount = cartItems.reduce((sum, item) => sum + item.qty, 0);
     const subtotalAmount = cartItems.reduce((sum, item) => sum + (Number(item.price || 0) * item.qty), 0);
     const taxAmount = subtotalAmount * 0.10;
@@ -224,7 +262,7 @@ function SelfOrderPage() {
 
     return (
         <div className="min-h-screen bg-gray-50 flex flex-col max-w-md mx-auto relative shadow-2xl overflow-x-hidden font-sans">
-            <SelfOrderHeader branch={branch} activeTab={activeTab} setActiveTab={setActiveTab} />
+            <SelfOrderHeader branch={branch} activeTab={activeTab} setActiveTab={setActiveTab} customerProfile={customerProfile} onLogoutMember={handleLogoutMember} />
 
             <div className="flex-1 pb-28 overflow-y-auto">
                 {activeTab === 'menu' && (
@@ -234,8 +272,25 @@ function SelfOrderPage() {
                             <p className="text-xs text-blue-200">Pesanan akan otomatis dikirim ke meja Anda.</p>
                         </div>
                         <div className="p-5">
+                            {/* Filter Kategori Menu (Makanan/Minuman/dll dari kolom menus.category) */}
+                            {menuCategories.length > 1 && (
+                                <div className="flex gap-2 overflow-x-auto pb-3 -mx-1 px-1 mb-3">
+                                    {menuCategories.map(cat => (
+                                        <button
+                                            key={cat}
+                                            onClick={() => setSelectedCategory(cat)}
+                                            className={`shrink-0 px-4 py-2 rounded-full text-xs font-black capitalize transition-colors ${selectedCategory === cat
+                                                ? 'bg-isaji-orange text-white shadow-sm'
+                                                : 'bg-white text-gray-500 border border-gray-200'
+                                                }`}
+                                        >
+                                            {cat}
+                                        </button>
+                                    ))}
+                                </div>
+                            )}
                             <div className="grid grid-cols-2 gap-4">
-                                {menus.map(menu => {
+                                {filteredMenus.map(menu => {
                                     const inCart = cart[menu.id]?.qty || 0;
                                     const isJustAdded = addedItemId === menu.id;
 

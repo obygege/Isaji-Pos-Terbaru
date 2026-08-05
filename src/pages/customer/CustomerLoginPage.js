@@ -165,7 +165,7 @@ function CustomerLoginPage() {
 
                 <div className="mt-8 text-center">
                     <p className="text-xs text-gray-500 font-medium">
-                        Belum punya akun? <button onClick={() => alert("Fitur Pendaftaran Sedang Dibangun")} className="font-bold text-isaji-orange hover:underline">Daftar Member</button>
+                        Belum punya akun? <button onClick={() => { window.location.href = '/customer-register'; }} className="font-bold text-isaji-orange hover:underline">Daftar Member</button>
                     </p>
                 </div>
             </div>
