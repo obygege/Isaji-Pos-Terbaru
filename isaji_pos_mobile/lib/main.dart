@@ -1,17 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:provider/provider.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 import 'screens/login/pin_login_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // TODO: Ganti dengan URL dan Anon Key Supabase Anda
+  // Load file rahasia
+  await dotenv.load(fileName: ".env");
+
+  // Inisialisasi Supabase menggunakan Key dari .env (Aman)
   await Supabase.initialize(
-    url: 'https://xyzcompany.supabase.co',
-    anonKey: 'public-anon-key',
+    url: dotenv.env['SUPABASE_URL']!,
+    publishableKey: dotenv.env['SUPABASE_KEY']!,
   );
 
   runApp(const IsajiPosApp());
@@ -26,8 +29,8 @@ class IsajiPosApp extends StatelessWidget {
       title: 'Isaji POS',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        primaryColor: const Color(0xFF0F2040), // isaji-navy
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF00B4D8)), // isaji-cyan
+        primaryColor: const Color(0xFF0F2040),
+        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF00B4D8)),
         textTheme: GoogleFonts.interTextTheme(Theme.of(context).textTheme),
         useMaterial3: true,
       ),

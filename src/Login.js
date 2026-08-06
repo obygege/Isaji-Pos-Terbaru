@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import supabase from './backend/lib/supabaseClient';
 import { detectUserRole } from './backend/lib/roleDetection';
 
-function Login({ onNavigate }) {
+function Login({ onNavigate, authError, clearAuthError }) {
     const [currentSlide, setCurrentSlide] = useState(0);
 
     const [email, setEmail] = useState(() => sessionStorage.getItem('loginEmail') || '');
@@ -34,6 +34,7 @@ function Login({ onNavigate }) {
         e.preventDefault();
         setIsLoading(true);
         setErrorMsg(null);
+        if (clearAuthError) clearAuthError();
 
         try {
             // 1. Autentikasi Supabase Auth
@@ -74,7 +75,12 @@ function Login({ onNavigate }) {
     };
 
     const handleGoogleLogin = async () => {
-        const { error } = await supabase.auth.signInWithOAuth({ provider: 'google' });
+        setErrorMsg(null);
+        if (clearAuthError) clearAuthError();
+        const { error } = await supabase.auth.signInWithOAuth({
+            provider: 'google',
+            options: { redirectTo: window.location.origin },
+        });
         if (error) setErrorMsg(error.message);
     };
 
@@ -105,8 +111,8 @@ function Login({ onNavigate }) {
                     <h2 className="text-3xl font-extrabold text-isaji-navy mb-2">Selamat Datang</h2>
                     <p className="text-gray-500 mb-6 font-medium">Masuk untuk mengelola operasional organisasi Anda.</p>
 
-                    {errorMsg && (
-                        <div className="bg-red-50 text-red-600 p-4 rounded-xl mb-6 text-sm font-bold border border-red-100">{errorMsg}</div>
+                    {(errorMsg || authError) && (
+                        <div className="bg-red-50 text-red-600 p-4 rounded-xl mb-6 text-sm font-bold border border-red-100">{errorMsg || authError}</div>
                     )}
 
                     <form onSubmit={handleLogin} className="space-y-5">

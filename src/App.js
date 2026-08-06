@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import supabase from './backend/lib/supabaseClient';
 import { detectUserRole } from './backend/lib/roleDetection';
+import { createOrganizationForUser } from './backend/lib/orgSignup';
 
 // Import Halaman Utama (Compro/Pegawai)
 import Home from './Home';
@@ -34,6 +35,7 @@ function App() {
   const [activePage, setActivePage] = useState(() => {
     return localStorage.getItem('isajiActivePage') || 'home';
   });
+  const [authError, setAuthError] = useState(null);
 
   // Simpan halaman terakhir ke LocalStorage (Hanya untuk Dashboard/Owner)
   useEffect(() => {
@@ -67,20 +69,49 @@ function App() {
 
   // Fungsi pintar untuk mendeteksi apakah user adalah Owner atau Manajer
   const determineUserRoleAndNavigate = async (userId) => {
+    // Kalau ini baru saja daftar lewat tombol Google di halaman Register,
+    // nama organisasinya dititip di sessionStorage sebelum redirect ke Google
+    // (form React reset total setelah balik dari redirect). Bikin org-nya di sini.
+    const pendingOrgName = sessionStorage.getItem('pendingOrgName');
+    if (pendingOrgName) {
+      // Hapus duluan supaya event auth yang nembak dobel (mis. token refresh)
+      // tidak bikin organization dua kali.
+      sessionStorage.removeItem('pendingOrgName');
+      sessionStorage.removeItem('pendingPicName');
+      try {
+        await createOrganizationForUser({ userId, orgName: pendingOrgName });
+      } catch (err) {
+        await supabase.auth.signOut();
+        setAuthError('Gagal menyelesaikan pendaftaran Google: ' + err.message);
+        setActivePage('login');
+        return;
+      }
+    }
+
     const { role } = await detectUserRole(userId);
 
     if (role === 'owner') {
+      setAuthError(null);
       setActivePage('dashboard'); // Dashboard Owner
       return;
     }
     if (role === 'manager') {
+      setAuthError(null);
       setActivePage('manager-dashboard'); // Dashboard Manajer
       return;
     }
 
-    // Bukan Owner/Manajer (superadmin, karyawan biasa, atau customer)
-    // -> JANGAN loloskan ke Owner Dashboard. Sign-out & balik ke login.
+    // Bukan Owner/Manajer (superadmin, karyawan biasa, atau customer baru
+    // yang login Google tanpa pernah daftar sebagai Owner) -> tolak dengan
+    // pesan JELAS, jangan diam-diam sign-out tanpa keterangan.
     await supabase.auth.signOut();
+    if (role === 'superadmin') {
+      setAuthError('Akun ini adalah akun Super Admin. Silakan login lewat Command Center.');
+    } else if (role === 'employee') {
+      setAuthError('Akun ini terdaftar sebagai karyawan biasa, bukan Owner/Manajer.');
+    } else {
+      setAuthError('Akun Google ini belum terdaftar sebagai Owner. Silakan daftar dulu lewat halaman Daftar.');
+    }
     setActivePage('login');
   };
 
@@ -114,7 +145,7 @@ function App() {
   // 3. LOGIKA ROUTING UTAMA APLIKASI (OWNER/MANAGER)
   // ==========================================
   if (activePage === 'home') return <Home onNavigate={setActivePage} />;
-  if (activePage === 'login') return <Login onNavigate={setActivePage} />;
+  if (activePage === 'login') return <Login onNavigate={setActivePage} authError={authError} clearAuthError={() => setAuthError(null)} />;
   if (activePage === 'register') return <Register onNavigate={setActivePage} />;
   if (activePage === 'forgot_password') return <ForgotPassword onNavigate={setActivePage} />;
 

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import supabase from './backend/lib/supabaseClient';
+import { createOrganizationForUser } from './backend/lib/orgSignup';
 
 function Register({ onNavigate }) {
     const [currentSlide, setCurrentSlide] = useState(0);
@@ -38,7 +39,7 @@ function Register({ onNavigate }) {
         setErrorMsg(null);
         setSuccessMsg(null);
 
-        const { error } = await supabase.auth.signUp({
+        const { data, error } = await supabase.auth.signUp({
             email: email,
             password: password,
             options: { data: { organization_name: orgName, full_name: picName } }
@@ -47,18 +48,48 @@ function Register({ onNavigate }) {
         if (error) {
             setErrorMsg(error.message);
             setIsLoading(false);
-        } else {
-            setSuccessMsg("Pendaftaran berhasil! Mengalihkan ke halaman Login...");
-            sessionStorage.clear(); // Bersihkan form
-            // Otomatis pindah ke login setelah 2 detik
-            setTimeout(() => {
-                onNavigate('login');
-            }, 2000);
+            return;
         }
+
+        // Bagian yang sebelumnya KELEWAT: bikin baris organizations beneran,
+        // supaya user ini terdeteksi sebagai Owner. Tanpa ini, akun ke-buat
+        // tapi tidak pernah bisa login (selalu "tidak punya akses backoffice").
+        if (data.user) {
+            try {
+                await createOrganizationForUser({ userId: data.user.id, orgName });
+            } catch (orgError) {
+                setErrorMsg('Akun dibuat, tapi gagal membuat organisasi: ' + orgError.message);
+                setIsLoading(false);
+                return;
+            }
+        }
+
+        setSuccessMsg("Pendaftaran berhasil! Mengalihkan ke halaman Login...");
+        sessionStorage.clear(); // Bersihkan form
+        // Otomatis pindah ke login setelah 2 detik
+        setTimeout(() => {
+            onNavigate('login');
+        }, 2000);
     };
 
     const handleGoogleLogin = async () => {
-        const { error } = await supabase.auth.signInWithOAuth({ provider: 'google' });
+        setErrorMsg(null);
+
+        // Nama organisasi WAJIB diisi dulu, karena setelah redirect ke Google
+        // dan balik lagi, form ini sudah ke-reset -- kita perlu simpan nilainya
+        // supaya App.js bisa bikin organization begitu sesi Google aktif.
+        if (!orgName.trim()) {
+            setErrorMsg('Isi dulu Nama Organisasi / Cafe sebelum daftar dengan Google.');
+            return;
+        }
+
+        sessionStorage.setItem('pendingOrgName', orgName.trim());
+        sessionStorage.setItem('pendingPicName', picName.trim());
+
+        const { error } = await supabase.auth.signInWithOAuth({
+            provider: 'google',
+            options: { redirectTo: window.location.origin },
+        });
         if (error) setErrorMsg(error.message);
     };
 
