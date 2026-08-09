@@ -17,7 +17,9 @@ import DiscountManager from './DiscountManager';
 import PaymentMethodManager from './PaymentMethodManager';
 import TableQRManager from './TableQRManager';
 // Menu Stok Dll
+import ManagerDashboardHome from './ManagerDashboardHome';
 import CustomerManager from './CustomerManager';
+import RecipeManager from './RecipeManager';
 
 function ManagerDashboard({ onNavigate }) {
     const [user, setUser] = useState(null);
@@ -146,6 +148,13 @@ function ManagerDashboard({ onNavigate }) {
                         branchName={branchData?.name}
                     />
                 );
+            case 'recipe':
+                return (
+                    <RecipeManager
+                        branchId={branchData?.id}
+                        organizationId={branchData?.organization_id}
+                    />
+                );
             case 'team':
                 return (
                     <EmployeeManager
@@ -161,34 +170,7 @@ function ManagerDashboard({ onNavigate }) {
                 );
             case 'dashboard':
             default:
-                return (
-                    <div className="space-y-6">
-                        <div className="bg-gradient-to-r from-isaji-navy to-blue-900 p-8 rounded-2xl text-white shadow-sm">
-                            <h2 className="text-2xl font-black mb-1">Selamat Datang, Manajer!</h2>
-                            <p className="text-blue-200 text-sm">
-                                Mengelola operasional penuh untuk cabang <strong>{branchData?.name}</strong>.
-                            </p>
-                        </div>
-                        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                            <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
-                                <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Penjualan Hari Ini</p>
-                                <p className="text-2xl font-black text-gray-900 mt-2">Rp 0</p>
-                            </div>
-                            <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
-                                <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Total Transaksi</p>
-                                <p className="text-2xl font-black text-gray-900 mt-2">0 Pesanan</p>
-                            </div>
-                            <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
-                                <p className="text-xs font-bold text-orange-500 uppercase tracking-wider">Stok Menipis</p>
-                                <p className="text-2xl font-black text-gray-900 mt-2">0 Item</p>
-                            </div>
-                            <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
-                                <p className="text-xs font-bold text-blue-500 uppercase tracking-wider">Kehadiran Tim</p>
-                                <p className="text-2xl font-black text-gray-900 mt-2">0 / 0 Staf</p>
-                            </div>
-                        </div>
-                    </div>
-                );
+                return <ManagerDashboardHome branchData={branchData} />;
         }
     };
 
