@@ -2,164 +2,201 @@ import React, { useState, useEffect, useCallback } from 'react';
 import supabase from '../backend/lib/supabaseClient';
 
 function formatRupiah(value) {
-    return 'Rp ' + Number(value || 0).toLocaleString('id-ID');
+    return Number(value || 0).toLocaleString('id-ID');
 }
 
-function monthStartStr() {
-    const now = new Date();
-    return new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
-}
-
-function todayStr() {
-    return new Date().toISOString().slice(0, 10);
-}
-
-const TAX_MODE_LABELS = {
-    bebas: 'Bebas Pajak',
-    pph_05: 'PPh Final 0,5%',
-    pb1_10: 'PB1 10%',
-    ppn_11: 'PPN 11%',
-};
-
-const TAX_SCHEME_LABELS = {
-    none: 'Tidak Ada',
-    pph_final: 'PPh Final',
-    pb1: 'PB1 (Pajak Restoran/Daerah)',
-    ppn: 'PPN',
-};
+const MONTHS = [
+    'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+    'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember',
+];
 
 function TaxReport({ orgData }) {
-    const [branches, setBranches] = useState([]);
     const [taxSettings, setTaxSettings] = useState(null);
-    const [summaries, setSummaries] = useState([]);
+    const [branches, setBranches] = useState([]);
+    const [orders, setOrders] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
-    const [dateFrom, setDateFrom] = useState(monthStartStr());
-    const [dateTo, setDateTo] = useState(todayStr());
+    const [year, setYear] = useState(new Date().getFullYear());
+    const [month, setMonth] = useState(new Date().getMonth()); // 0-11
 
     const fetchData = useCallback(async () => {
         if (!orgData?.id) return;
         setIsLoading(true);
         try {
-            const [branchRes, settingsRes] = await Promise.all([
-                supabase.from('branches').select('id, name, tax_mode, city').eq('organization_id', orgData.id),
+            const [taxRes, branchRes] = await Promise.all([
                 supabase.from('tax_settings').select('*').eq('organization_id', orgData.id).maybeSingle(),
+                supabase.from('branches').select('id, name, tax_mode').eq('organization_id', orgData.id),
             ]);
+            setTaxSettings(taxRes.data);
+            setBranches(branchRes.data || []);
 
-            const allBranches = branchRes.data || [];
-            setBranches(allBranches);
-            setTaxSettings(settingsRes.data || null);
+            const start = new Date(year, month, 1).toISOString();
+            const end = new Date(year, month + 1, 0, 23, 59, 59).toISOString();
 
-            const branchIds = allBranches.map(b => b.id);
-            if (branchIds.length > 0) {
-                const { data: summaryData } = await supabase
-                    .from('daily_financial_summaries')
-                    .select('branch_id, summary_date, gross_sales, tax_amount, net_sales')
-                    .in('branch_id', branchIds)
-                    .gte('summary_date', dateFrom)
-                    .lte('summary_date', dateTo);
-                setSummaries(summaryData || []);
-            } else {
-                setSummaries([]);
-            }
+            const { data: orderData, error } = await supabase
+                .from('orders')
+                .select('id, branch_id, subtotal, discount_amount, tax_amount, total_amount, status, created_at, order_number')
+                .eq('organization_id', orgData.id)
+                .neq('status', 'cancelled')
+                .gte('created_at', start)
+                .lte('created_at', end);
+
+            if (error) throw error;
+            setOrders(orderData || []);
         } catch (err) {
             console.error('Gagal memuat laporan pajak:', err.message);
         } finally {
             setIsLoading(false);
         }
-    }, [orgData, dateFrom, dateTo]);
+    }, [orgData, year, month]);
 
-    useEffect(() => { fetchData(); }, [fetchData]);
+    useEffect(() => {
+        fetchData();
+    }, [fetchData]);
 
-    const branchTaxMap = {};
-    branches.forEach(b => { branchTaxMap[b.id] = { name: b.name, taxMode: b.tax_mode, totalTax: 0, totalSales: 0 }; });
-    summaries.forEach(s => {
-        if (branchTaxMap[s.branch_id]) {
-            branchTaxMap[s.branch_id].totalTax += Number(s.tax_amount || 0);
-            branchTaxMap[s.branch_id].totalSales += Number(s.gross_sales || 0);
-        }
+    const branchName = (id) => branches.find((b) => b.id === id)?.name || '-';
+
+    // DPP (Dasar Pengenaan Pajak) = subtotal dikurangi diskon, sebelum pajak.
+    const dpp = orders.reduce((sum, o) => sum + Number(o.subtotal || 0) - Number(o.discount_amount || 0), 0);
+    const totalTax = orders.reduce((sum, o) => sum + Number(o.tax_amount || 0), 0);
+    const grandTotal = orders.reduce((sum, o) => sum + Number(o.total_amount || 0), 0);
+
+    const perBranch = branches.map((b) => {
+        const branchOrders = orders.filter((o) => o.branch_id === b.id);
+        return {
+            id: b.id,
+            name: b.name,
+            dpp: branchOrders.reduce((s, o) => s + Number(o.subtotal || 0) - Number(o.discount_amount || 0), 0),
+            tax: branchOrders.reduce((s, o) => s + Number(o.tax_amount || 0), 0),
+            orderCount: branchOrders.length,
+        };
     });
-    const branchRows = Object.values(branchTaxMap);
-    const totalTaxCollected = branchRows.reduce((s, b) => s + b.totalTax, 0);
-    const totalSales = branchRows.reduce((s, b) => s + b.totalSales, 0);
+
+    const handleExportCSV = () => {
+        const periodLabel = `${MONTHS[month]}-${year}`;
+        const rows = [
+            ['Masa Pajak', 'NPWP', 'Nama Wajib Pajak / Usaha', 'Cabang', 'Jumlah Transaksi', 'DPP (Dasar Pengenaan Pajak)', 'PPN / Pajak Terutang', 'Total (DPP + Pajak)'],
+            ...perBranch.map((b) => [
+                periodLabel,
+                taxSettings?.npwp || '-',
+                orgData?.name || '-',
+                b.name,
+                b.orderCount,
+                Math.round(b.dpp),
+                Math.round(b.tax),
+                Math.round(b.dpp + b.tax),
+            ]),
+            [],
+            ['TOTAL', '', '', '', orders.length, Math.round(dpp), Math.round(totalTax), Math.round(grandTotal)],
+        ];
+
+        const csvContent = rows.map((row) => row.map((cell) => `"${cell}"`).join(',')).join('\n');
+        const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `Laporan_Pajak_${orgData?.name?.replace(/\s+/g, '_') || 'Isaji'}_${periodLabel}.csv`;
+        link.click();
+        URL.revokeObjectURL(url);
+    };
+
+    const handlePrint = () => window.print();
 
     return (
         <div className="space-y-6">
-            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
-                <h3 className="font-black text-gray-900 mb-4">Skema Pajak Organisasi</h3>
-                {isLoading ? (
-                    <p className="text-sm text-gray-400">Memuat pengaturan pajak...</p>
-                ) : taxSettings ? (
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-sm">
-                        <div>
-                            <p className="text-xs font-bold text-gray-400 uppercase">Skema</p>
-                            <p className="font-bold text-gray-900 mt-1">{TAX_SCHEME_LABELS[taxSettings.scheme] || taxSettings.scheme}</p>
-                        </div>
-                        <div>
-                            <p className="text-xs font-bold text-gray-400 uppercase">Tarif Kustom</p>
-                            <p className="font-bold text-gray-900 mt-1">{taxSettings.custom_rate_percent}%</p>
-                        </div>
-                        <div>
-                            <p className="text-xs font-bold text-gray-400 uppercase">NPWP</p>
-                            <p className="font-bold text-gray-900 mt-1">{taxSettings.npwp || '-'}</p>
-                        </div>
-                        <div>
-                            <p className="text-xs font-bold text-gray-400 uppercase">Status PKP</p>
-                            <p className="font-bold text-gray-900 mt-1">{taxSettings.is_pkp ? 'Pengusaha Kena Pajak' : 'Bukan PKP'}</p>
-                        </div>
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 print:hidden">
+                <div>
+                    <h2 className="text-xl font-bold text-gray-900">Laporan Pajak</h2>
+                    <p className="text-sm text-gray-500">Rekap DPP & PPN per periode, siap export/print.</p>
+                </div>
+                <div className="flex gap-2 flex-wrap">
+                    <select value={month} onChange={(e) => setMonth(Number(e.target.value))} className="px-3 py-2 rounded-lg border border-gray-200 text-sm">
+                        {MONTHS.map((m, i) => <option key={m} value={i}>{m}</option>)}
+                    </select>
+                    <select value={year} onChange={(e) => setYear(Number(e.target.value))} className="px-3 py-2 rounded-lg border border-gray-200 text-sm">
+                        {[year - 1, year, year + 1].map((y) => <option key={y} value={y}>{y}</option>)}
+                    </select>
+                    <button onClick={handleExportCSV} className="bg-isaji-navy hover:bg-blue-900 text-white text-sm font-bold px-4 py-2 rounded-lg shadow-sm">
+                        Export CSV
+                    </button>
+                    <button onClick={handlePrint} className="bg-white border border-gray-200 text-gray-700 text-sm font-bold px-4 py-2 rounded-lg hover:bg-gray-50">
+                        Print
+                    </button>
+                </div>
+            </div>
+
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-xs text-amber-800 print:hidden">
+                ⚠️ <strong>Penting:</strong> Rekap ini dihitung otomatis dari data transaksi kamu dan formatnya mengikuti struktur SPT Masa PPN yang umum dipakai. Karena format upload resmi DJK (Coretax/e-Faktur) bisa berubah dari waktu ke waktu, <strong>tetap cek/verifikasi ke akuntan atau konsultan pajak kamu</strong> sebelum melaporkan resmi, supaya sesuai ketentuan terbaru.
+            </div>
+
+            {!taxSettings?.npwp && (
+                <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-xs text-red-700 print:hidden">
+                    NPWP organisasi belum diisi. Lengkapi dulu di halaman Pengaturan Toko supaya muncul di laporan ini.
+                </div>
+            )}
+
+            {/* Kop Laporan -- muncul juga saat print */}
+            <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
+                <div className="flex justify-between items-start mb-6 pb-4 border-b border-gray-100">
+                    <div>
+                        <h3 className="font-black text-lg text-gray-900">{orgData?.name}</h3>
+                        <p className="text-xs text-gray-500 mt-1">NPWP: {taxSettings?.npwp || '-'}</p>
+                        <p className="text-xs text-gray-500">Status PKP: {taxSettings?.is_pkp ? 'Ya' : 'Tidak'} • Skema: {taxSettings?.scheme || 'none'}</p>
                     </div>
-                ) : (
-                    <p className="text-sm text-gray-400">Pengaturan pajak organisasi belum dikonfigurasi. Atur di menu Pengaturan Toko.</p>
-                )}
-            </div>
-
-            <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm flex flex-col md:flex-row gap-3">
-                <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="border border-gray-200 rounded-lg px-3 py-2 text-sm font-semibold text-gray-700" />
-                <span className="self-center text-gray-400 text-sm">s/d</span>
-                <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="border border-gray-200 rounded-lg px-3 py-2 text-sm font-semibold text-gray-700" />
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
-                    <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Total Penjualan (periode)</p>
-                    <p className="text-2xl font-black text-gray-900 mt-2">{formatRupiah(totalSales)}</p>
+                    <div className="text-right">
+                        <p className="text-xs text-gray-400 uppercase font-bold">Masa Pajak</p>
+                        <p className="font-black text-gray-900">{MONTHS[month]} {year}</p>
+                    </div>
                 </div>
-                <div className="bg-white p-6 rounded-2xl border border-isaji-orange/30 bg-orange-50/40 shadow-sm">
-                    <p className="text-xs font-bold text-isaji-orange uppercase tracking-wider">Total Pajak Terkumpul</p>
-                    <p className="text-2xl font-black text-gray-900 mt-2">{formatRupiah(totalTaxCollected)}</p>
-                </div>
-            </div>
 
-            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-                <div className="px-6 py-4 border-b border-gray-100">
-                    <h3 className="font-black text-gray-900">Pajak per Cabang</h3>
-                </div>
                 {isLoading ? (
-                    <div className="px-6 py-16 text-center text-gray-400 text-sm">Memuat data...</div>
-                ) : branchRows.length === 0 ? (
-                    <div className="px-6 py-16 text-center text-gray-400 text-sm">Belum ada data cabang.</div>
+                    <div className="text-center py-10 text-gray-400 text-sm">Memuat data...</div>
                 ) : (
-                    <div className="overflow-x-auto">
+                    <>
+                        <div className="grid grid-cols-3 gap-4 mb-6">
+                            <div className="bg-gray-50 rounded-xl p-4">
+                                <p className="text-[10px] font-bold text-gray-400 uppercase">DPP (Dasar Pengenaan Pajak)</p>
+                                <p className="text-lg font-black text-gray-900 mt-1">Rp {formatRupiah(dpp)}</p>
+                            </div>
+                            <div className="bg-gray-50 rounded-xl p-4">
+                                <p className="text-[10px] font-bold text-gray-400 uppercase">Total Pajak Terutang</p>
+                                <p className="text-lg font-black text-isaji-navy mt-1">Rp {formatRupiah(totalTax)}</p>
+                            </div>
+                            <div className="bg-gray-50 rounded-xl p-4">
+                                <p className="text-[10px] font-bold text-gray-400 uppercase">Total (DPP + Pajak)</p>
+                                <p className="text-lg font-black text-gray-900 mt-1">Rp {formatRupiah(grandTotal)}</p>
+                            </div>
+                        </div>
+
                         <table className="w-full text-sm">
                             <thead>
-                                <tr className="bg-gray-50 border-b border-gray-100 text-left text-[11px] font-bold text-gray-500 uppercase tracking-wider">
-                                    <th className="px-6 py-3">Cabang</th>
-                                    <th className="px-6 py-3">Skema Pajak Cabang</th>
-                                    <th className="px-6 py-3 text-right">Total Penjualan</th>
-                                    <th className="px-6 py-3 text-right">Pajak Terkumpul</th>
+                                <tr className="bg-gray-50 border-b border-gray-200 text-left text-[11px] font-bold text-gray-500 uppercase tracking-wider">
+                                    <th className="px-3 py-2">Cabang</th>
+                                    <th className="px-3 py-2">Jml Transaksi</th>
+                                    <th className="px-3 py-2 text-right">DPP</th>
+                                    <th className="px-3 py-2 text-right">Pajak</th>
+                                    <th className="px-3 py-2 text-right">Total</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                {branchRows.map((b, idx) => (
-                                    <tr key={idx} className="border-b border-gray-50">
-                                        <td className="px-6 py-3 font-bold text-gray-900">{b.name}</td>
-                                        <td className="px-6 py-3 text-gray-600">{TAX_MODE_LABELS[b.taxMode] || b.taxMode || '-'}</td>
-                                        <td className="px-6 py-3 text-right text-gray-700">{formatRupiah(b.totalSales)}</td>
-                                        <td className="px-6 py-3 text-right font-bold text-gray-900">{formatRupiah(b.totalTax)}</td>
+                                {perBranch.map((b) => (
+                                    <tr key={b.id} className="border-b border-gray-100">
+                                        <td className="px-3 py-2 font-bold text-gray-900">{b.name}</td>
+                                        <td className="px-3 py-2 text-gray-600">{b.orderCount}</td>
+                                        <td className="px-3 py-2 text-right text-gray-700">Rp {formatRupiah(b.dpp)}</td>
+                                        <td className="px-3 py-2 text-right text-gray-700">Rp {formatRupiah(b.tax)}</td>
+                                        <td className="px-3 py-2 text-right font-bold text-gray-900">Rp {formatRupiah(b.dpp + b.tax)}</td>
                                     </tr>
                                 ))}
+                                <tr className="font-black text-gray-900">
+                                    <td className="px-3 py-3">TOTAL</td>
+                                    <td className="px-3 py-3">{orders.length}</td>
+                                    <td className="px-3 py-3 text-right">Rp {formatRupiah(dpp)}</td>
+                                    <td className="px-3 py-3 text-right">Rp {formatRupiah(totalTax)}</td>
+                                    <td className="px-3 py-3 text-right">Rp {formatRupiah(grandTotal)}</td>
+                                </tr>
                             </tbody>
                         </table>
-                    </div>
+                    </>
                 )}
             </div>
         </div>
