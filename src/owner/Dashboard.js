@@ -8,13 +8,22 @@ import Branches from './Branches';
 import SubscriptionPlan from './SubscriptionPlan';
 import Employees from './Employees';
 import Attendance from './Attendance'; // PERBAIKAN: Import komponen Attendance
+import DashboardHome from './DashboardHome';
+import TransactionHistory from './TransactionHistory';
+import ProductsReport from './ProductsReport';
+import InventoryReport from './InventoryReport';
+import Customers from './Customers';
+import LoyaltyProgram from './LoyaltyProgram';
+import Finance from './Finance';
+import TaxReport from './TaxReport';
+import Settings from './Settings';
 
 function Dashboard({ onNavigate }) {
     const [user, setUser] = useState(null);
     const [role, setRole] = useState(null);
     const [orgData, setOrgData] = useState(null);
     const [loadingAuth, setLoadingAuth] = useState(true);
-    const [activeMenu, setActiveMenu] = useState('branches');
+    const [activeMenu, setActiveMenu] = useState('dashboard');
     const [showUpgradeModal, setShowUpgradeModal] = useState(false);
 
     const checkAuthAndSubscription = useCallback(async () => {
@@ -103,12 +112,30 @@ function Dashboard({ onNavigate }) {
 
     const renderContent = () => {
         switch (activeMenu) {
+            case 'dashboard':
+                return <DashboardHome orgData={orgData} user={user} />;
             case 'branches':
                 return <Branches orgData={orgData} />;
+            case 'transaction-history':
+                return <TransactionHistory orgData={orgData} />;
             case 'employees':
                 return <Employees orgData={orgData} />;
             case 'attendance': // PERBAIKAN: Routing untuk komponen Attendance
                 return <Attendance orgData={orgData} />;
+            case 'products':
+                return <ProductsReport orgData={orgData} />;
+            case 'inventory':
+                return <InventoryReport orgData={orgData} />;
+            case 'customers':
+                return <Customers orgData={orgData} />;
+            case 'loyalty':
+                return <LoyaltyProgram orgData={orgData} />;
+            case 'finance':
+                return <Finance orgData={orgData} />;
+            case 'tax':
+                return <TaxReport orgData={orgData} />;
+            case 'settings':
+                return <Settings orgData={orgData} />;
             default:
                 return (
                     <div className="flex flex-col items-center justify-center h-full text-center">

@@ -1,13 +1,25 @@
 import React from 'react';
 
+const PAGE_TITLES = {
+    dashboard: 'Ringkasan Bisnis',
+    branches: 'Daftar Cabang',
+    'transaction-history': 'Riwayat Transaksi',
+    products: 'Laporan Menu',
+    inventory: 'Laporan Stok',
+    customers: 'Data Pelanggan',
+    loyalty: 'Program Loyalitas',
+    employees: 'Daftar Karyawan',
+    attendance: 'Absensi Karyawan',
+    finance: 'Laporan Keuangan',
+    tax: 'Laporan Pajak',
+    settings: 'Pengaturan Toko',
+};
+
 function Header({ activeMenu, user, handleLogout }) {
     return (
         <header className="h-20 bg-white border-b border-gray-100 px-8 flex justify-between items-center shrink-0 z-10">
             <h1 className="text-xl font-bold text-gray-800 capitalize">
-                {activeMenu === 'dashboard' ? 'Ringkasan Bisnis' :
-                    activeMenu === 'branches' ? 'Manajemen Cabang' :
-                        activeMenu === 'employees' ? 'Anggota Tim' :
-                            activeMenu === 'reports' ? 'Laporan Keuangan' : 'Halaman'}
+                {PAGE_TITLES[activeMenu] || 'Halaman'}
             </h1>
 
             <div className="flex items-center gap-6">
