@@ -16,6 +16,8 @@ import LocationTrackingManager from './LocationTrackingManager';
 import DiscountManager from './DiscountManager';
 import PaymentMethodManager from './PaymentMethodManager';
 import TableQRManager from './TableQRManager';
+// Menu Stok Dll
+import CustomerManager from './CustomerManager';
 
 function ManagerDashboard({ onNavigate }) {
     const [user, setUser] = useState(null);
@@ -117,13 +119,11 @@ function ManagerDashboard({ onNavigate }) {
                 );
             case 'customers':
                 return (
-                    <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-100">
-                        <h3 className="text-xl font-black text-gray-900 mb-2">Manajemen Pelanggan (CRM) - {branchData?.name}</h3>
-                        <p className="text-sm text-gray-500 mb-6">Database member, riwayat transaksi, dan poin loyalitas pelanggan.</p>
-                        <div className="p-12 text-center border-2 border-dashed border-gray-200 rounded-xl text-gray-400 font-medium">
-                            Modul Pelanggan Cabang aktif.
-                        </div>
-                    </div>
+                    <CustomerManager
+                        branchId={branchData?.id}
+                        organizationId={branchData?.organization_id}
+                        branchName={branchData?.name}
+                    />
                 );
             case 'location_tracking':
                 return (

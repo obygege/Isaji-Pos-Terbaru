@@ -42,15 +42,15 @@ class _OpenShiftScreenState extends State<OpenShiftScreen> {
       final prefs = await SharedPreferences.getInstance();
       final branchId = prefs.getString('branch_id');
 
-      // DIPERBAIKI: Ambil user_id untuk menghindari error foreign key
-      final userId = prefs.getString('user_id');
+      // Ambil ID Karyawan
+      final empId = prefs.getString('emp_id');
       final openingCash = double.parse(_cashController.text);
 
       final response = await supabase
           .from('cashier_shifts')
           .insert({
             'branch_id': branchId,
-            'cashier_id': userId, // MENGGUNAKAN USER_ID, SESUAI ATURAN DATABASE
+            'cashier_id': empId, // Gunakan emp_id sebagai kasir
             'opening_cash': openingCash,
           })
           .select('id')

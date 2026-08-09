@@ -33,3 +33,4 @@ flutter:
   # Mendaftarkan file rahasia .env agar bisa dibaca oleh sistem
   assets:
     - .env
+    - assets/images/LOGO.png

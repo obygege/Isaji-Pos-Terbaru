@@ -2,16 +2,17 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:responsive_builder/responsive_builder.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:intl/intl.dart';
 import '../../../utils/printer_helper.dart';
 
 class CartItem {
-  final String productId;
+  final String menuId;
   final String name;
   final double price;
   int qty;
 
   CartItem({
-    required this.productId,
+    required this.menuId,
     required this.name,
     required this.price,
     this.qty = 1,
@@ -29,14 +30,21 @@ class CashierTab extends StatefulWidget {
 
 class _CashierTabState extends State<CashierTab> {
   final supabase = Supabase.instance.client;
-  List<Map<String, dynamic>> _products = [];
-  List<Map<String, dynamic>> _categories = [];
+
+  List<Map<String, dynamic>> _menus = [];
+  List<String> _categories = [];
   final List<CartItem> _cart = [];
 
   String? _selectedCategory;
   bool _isLoading = true;
   String _searchQuery = '';
   String _branchId = '';
+
+  final NumberFormat _currencyFormat = NumberFormat.currency(
+    locale: 'id_ID',
+    symbol: 'Rp ',
+    decimalDigits: 0,
+  );
 
   @override
   void initState() {
@@ -50,44 +58,47 @@ class _CashierTabState extends State<CashierTab> {
       _branchId = prefs.getString('branch_id') ?? '';
     });
 
-    await Future.wait([_fetchCategories(), _fetchProducts()]);
+    await _fetchMenus();
   }
 
-  Future<void> _fetchCategories() async {
-    final res = await supabase.from('product_categories').select('*');
-    if (res.isNotEmpty) {
-      setState(() {
-        _categories = List<Map<String, dynamic>>.from(res);
-      });
-    }
-  }
-
-  Future<void> _fetchProducts() async {
+  Future<void> _fetchMenus() async {
     setState(() => _isLoading = true);
-    var query = supabase.from('products').select('*').eq('is_active', true);
+    try {
+      final res = await supabase
+          .from('menus')
+          .select('*')
+          .eq('branch_id', _branchId);
 
-    if (_selectedCategory != null) {
-      query = query.eq('category_id', _selectedCategory!);
+      final List<String> extractedCategories = [];
+      for (var item in res) {
+        final cat = item['category']?.toString() ?? 'Lainnya';
+        if (!extractedCategories.contains(cat)) {
+          extractedCategories.add(cat);
+        }
+      }
+
+      setState(() {
+        _menus = List<Map<String, dynamic>>.from(res);
+        _categories = extractedCategories;
+      });
+    } catch (e) {
+      debugPrint("Gagal load menu: $e");
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
-
-    final res = await query;
-    setState(() {
-      _products = List<Map<String, dynamic>>.from(res);
-      _isLoading = false;
-    });
   }
 
-  void _addToCart(Map<String, dynamic> product) {
+  void _addToCart(Map<String, dynamic> menu) {
     setState(() {
-      final index = _cart.indexWhere((item) => item.productId == product['id']);
+      final index = _cart.indexWhere((item) => item.menuId == menu['id']);
       if (index >= 0) {
         _cart[index].qty++;
       } else {
         _cart.add(
           CartItem(
-            productId: product['id'],
-            name: product['name'],
-            price: (product['base_price'] as num).toDouble(),
+            menuId: menu['id'],
+            name: menu['name'],
+            price: (menu['price'] as num).toDouble(),
           ),
         );
       }
@@ -107,7 +118,6 @@ class _CashierTabState extends State<CashierTab> {
   double get _tax => _subtotal * 0.10;
   double get _grandTotal => _subtotal + _tax;
 
-  // FITUR MAJOO KILLER: Proses Transaksi, Potong Stok Otomatis, & Cetak Struk
   Future<void> _processTransaction(
     String paymentMethod,
     double amountTendered,
@@ -115,20 +125,22 @@ class _CashierTabState extends State<CashierTab> {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (context) => const Center(child: CircularProgressIndicator()),
+      builder: (context) => const Center(
+        child: CircularProgressIndicator(color: Color(0xFF00B4D8)),
+      ),
     );
 
     try {
       final prefs = await SharedPreferences.getInstance();
       final orgId = prefs.getString('org_id');
       final empId = prefs.getString('emp_id');
+      final shiftId = prefs.getString('shift_id');
       final empName = prefs.getString('emp_name') ?? 'Kasir';
 
       final timestamp = DateTime.now();
       final orderNumber =
           'ORD-${timestamp.year}${timestamp.month.toString().padLeft(2, '0')}${timestamp.day.toString().padLeft(2, '0')}-${timestamp.millisecondsSinceEpoch.toString().substring(8)}';
 
-      // 1. Simpan Order
       final orderResponse = await supabase
           .from('orders')
           .insert({
@@ -139,54 +151,39 @@ class _CashierTabState extends State<CashierTab> {
             'status': 'completed',
             'payment_status': 'paid',
             'subtotal': _subtotal,
+            'discount_amount': 0,
             'tax_amount': _tax,
+            'service_charge': 0,
             'total_amount': _grandTotal,
             'cashier_id': empId,
+            'shift_id': shiftId,
           })
           .select('id')
           .single();
 
       final String orderId = orderResponse['id'];
 
-      // 2. Simpan Item & Kurangi Stok Resep
       for (var item in _cart) {
         await supabase.from('order_items').insert({
           'order_id': orderId,
-          'product_id': item.productId,
+          'product_id': item.menuId,
           'qty': item.qty,
           'unit_price': item.price,
           'subtotal': item.subtotal,
         });
 
-        // Cek resep
-        final recipes = await supabase
-            .from('product_recipes')
-            .select('ingredient_id, qty_used')
-            .eq('product_id', item.productId);
-
-        for (var recipe in recipes) {
-          final double totalUsed =
-              (recipe['qty_used'] as num).toDouble() * item.qty;
-
-          final currentStockRes = await supabase
-              .from('ingredient_stocks')
-              .select('id, qty_on_hand')
-              .eq('ingredient_id', recipe['ingredient_id'])
-              .eq('branch_id', _branchId)
-              .maybeSingle();
-
-          if (currentStockRes != null) {
-            final double currentQty = (currentStockRes['qty_on_hand'] as num)
-                .toDouble();
-            await supabase
-                .from('ingredient_stocks')
-                .update({'qty_on_hand': currentQty - totalUsed})
-                .eq('id', currentStockRes['id']);
-          }
+        try {
+          final currentMenu = _menus.firstWhere((m) => m['id'] == item.menuId);
+          final currentStock = (currentMenu['stock'] as num?)?.toInt() ?? 0;
+          await supabase
+              .from('menus')
+              .update({'stock': currentStock - item.qty})
+              .eq('id', item.menuId);
+        } catch (e) {
+          debugPrint('Gagal potong stok menu: $e');
         }
       }
 
-      // 3. Simpan Payment
       await supabase.from('payments').insert({
         'order_id': orderId,
         'method': paymentMethod,
@@ -195,14 +192,13 @@ class _CashierTabState extends State<CashierTab> {
       });
 
       if (!mounted) return;
-      Navigator.pop(context); // Tutup dialog loading
+      Navigator.pop(context);
 
       final double change =
           (paymentMethod == 'cash' && amountTendered > _grandTotal)
           ? amountTendered - _grandTotal
           : 0.0;
 
-      // 4. TRIGGER CETAK STRUK THERMAL BLUETOOTH
       try {
         await PrinterHelper.printReceipt(
           orderNumber: orderNumber,
@@ -221,13 +217,16 @@ class _CashierTabState extends State<CashierTab> {
         debugPrint("Gagal cetak struk: $e");
       }
 
-      // 5. Tampilkan Modal Sukses
       _showSuccessDialog(orderNumber, change);
+      _fetchMenus();
     } catch (e) {
       if (!mounted) return;
       Navigator.pop(context);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Gagal: $e'), backgroundColor: Colors.red),
+        SnackBar(
+          content: Text('Gagal Transaksi: $e'),
+          backgroundColor: Colors.red,
+        ),
       );
     }
   }
@@ -244,36 +243,65 @@ class _CashierTabState extends State<CashierTab> {
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(24),
+              ),
               title: const Text(
                 'Pembayaran',
-                style: TextStyle(fontWeight: FontWeight.bold),
+                style: TextStyle(
+                  fontWeight: FontWeight.w900,
+                  color: Color(0xFF0F2040),
+                ),
               ),
               content: SizedBox(
-                width: 400,
+                width: 450,
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(
-                      'Total Tagihan: Rp ${_grandTotal.toStringAsFixed(0)}',
-                      style: const TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.w900,
-                        color: Color(0xFF00B4D8),
+                    Container(
+                      padding: const EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF00B4D8).withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Column(
+                        children: [
+                          const Text(
+                            'Total Tagihan',
+                            style: TextStyle(
+                              color: Color(0xFF0F2040),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            _currencyFormat.format(_grandTotal),
+                            style: const TextStyle(
+                              fontSize: 32,
+                              fontWeight: FontWeight.w900,
+                              color: Color(0xFF00B4D8),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                     const SizedBox(height: 24),
-
                     SegmentedButton<String>(
+                      style: SegmentedButton.styleFrom(
+                        backgroundColor: Colors.white,
+                        selectedForegroundColor: Colors.white,
+                        selectedBackgroundColor: const Color(0xFF0F2040),
+                      ),
                       segments: const [
                         ButtonSegment(
                           value: 'cash',
                           label: Text('Tunai'),
-                          icon: Icon(Icons.money),
+                          icon: Icon(Icons.payments),
                         ),
                         ButtonSegment(
                           value: 'qris',
                           label: Text('QRIS'),
-                          icon: Icon(Icons.qr_code),
+                          icon: Icon(Icons.qr_code_2),
                         ),
                         ButtonSegment(
                           value: 'debit',
@@ -289,28 +317,47 @@ class _CashierTabState extends State<CashierTab> {
                       },
                     ),
                     const SizedBox(height: 24),
-
                     if (selectedMethod == 'cash') ...[
                       TextField(
                         controller: cashController,
                         keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(
-                          labelText: 'Uang Diterima (Rp)',
-                          border: OutlineInputBorder(),
-                          prefixIcon: Icon(Icons.payments),
+                        style: const TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        decoration: InputDecoration(
+                          labelText: 'Uang Diterima',
+                          prefixText: 'Rp ',
+                          filled: true,
+                          fillColor: Colors.grey.shade50,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(16),
+                            borderSide: BorderSide.none,
+                          ),
                         ),
                       ),
                       const SizedBox(height: 16),
                       Wrap(
                         spacing: 8,
+                        runSpacing: 8,
+                        alignment: WrapAlignment.center,
                         children: [50000, 100000, 150000, 200000].map((amount) {
                           return OutlinedButton(
+                            style: OutlinedButton.styleFrom(
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              side: BorderSide(color: Colors.grey.shade300),
+                            ),
                             onPressed: () {
                               setDialogState(
                                 () => cashController.text = amount.toString(),
                               );
                             },
-                            child: Text('Rp $amount'),
+                            child: Text(
+                              _currencyFormat.format(amount),
+                              style: const TextStyle(color: Color(0xFF0F2040)),
+                            ),
                           );
                         }).toList(),
                       ),
@@ -318,17 +365,28 @@ class _CashierTabState extends State<CashierTab> {
                   ],
                 ),
               ),
+              actionsPadding: const EdgeInsets.all(24),
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(context),
                   child: const Text(
                     'Batal',
-                    style: TextStyle(color: Colors.grey),
+                    style: TextStyle(
+                      color: Colors.grey,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
                 ElevatedButton(
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF0F2040),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 32,
+                      vertical: 16,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                   ),
                   onPressed: () {
                     final amountTendered =
@@ -348,7 +406,10 @@ class _CashierTabState extends State<CashierTab> {
                   },
                   child: const Text(
                     'Proses Pembayaran',
-                    style: TextStyle(color: Colors.white),
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
               ],
@@ -366,28 +427,55 @@ class _CashierTabState extends State<CashierTab> {
       builder: (context) {
         return AlertDialog(
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(24),
           ),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.check_circle, color: Colors.green, size: 80),
-              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: Colors.green.withValues(alpha: 0.1),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.check_circle,
+                  color: Colors.green,
+                  size: 64,
+                ),
+              ),
+              const SizedBox(height: 24),
               const Text(
                 'Transaksi Berhasil!',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                style: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.w900,
+                  color: Color(0xFF0F2040),
+                ),
               ),
+              const SizedBox(height: 8),
               Text(
                 'No: $orderNumber',
                 style: const TextStyle(color: Colors.grey),
               ),
-              const SizedBox(height: 16),
               if (change > 0) ...[
-                const Text('Kembalian:', style: TextStyle(fontSize: 16)),
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 24),
+                  child: Divider(),
+                ),
+                const Text(
+                  'Uang Kembali',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey,
+                  ),
+                ),
+                const SizedBox(height: 8),
                 Text(
-                  'Rp ${change.toStringAsFixed(0)}',
+                  _currencyFormat.format(change),
                   style: const TextStyle(
-                    fontSize: 32,
+                    fontSize: 36,
                     fontWeight: FontWeight.w900,
                     color: Colors.redAccent,
                   ),
@@ -395,15 +483,30 @@ class _CashierTabState extends State<CashierTab> {
               ],
             ],
           ),
+          actionsPadding: const EdgeInsets.all(24),
           actions: [
             SizedBox(
               width: double.infinity,
+              height: 54,
               child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF00B4D8),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                ),
                 onPressed: () {
                   setState(() => _cart.clear());
                   Navigator.pop(context);
                 },
-                child: const Text('Pesanan Baru'),
+                child: const Text(
+                  'Pesanan Baru',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                  ),
+                ),
               ),
             ),
           ],
@@ -419,85 +522,126 @@ class _CashierTabState extends State<CashierTab> {
         bool isTabletOrDesktop =
             sizingInfo.deviceScreenType != DeviceScreenType.mobile;
 
-        if (isTabletOrDesktop) {
-          return Row(
-            children: [
-              Expanded(flex: 3, child: _buildProductSection()),
-              Container(width: 1, color: Colors.grey.shade200),
-              Expanded(flex: 2, child: _buildCartSection()),
-            ],
-          );
-        } else {
-          return Stack(
-            children: [
-              _buildProductSection(),
-              if (_cart.isNotEmpty)
-                Positioned(
-                  bottom: 0,
-                  left: 0,
-                  right: 0,
-                  child: Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: const BoxDecoration(
-                      color: Colors.white,
-                      boxShadow: [
-                        BoxShadow(color: Colors.black12, blurRadius: 10),
-                      ],
-                    ),
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF0F2040),
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                      ),
-                      onPressed: () {
-                        showModalBottomSheet(
-                          context: context,
-                          isScrollControlled: true,
-                          builder: (context) => Container(
-                            height: MediaQuery.of(context).size.height * 0.75,
-                            padding: const EdgeInsets.all(16),
-                            child: _buildCartSection(),
+        return Scaffold(
+          backgroundColor: const Color(0xFFF4F7FE),
+          body: isTabletOrDesktop
+              ? Row(
+                  children: [
+                    Expanded(flex: 13, child: _buildProductSection()),
+                    Container(width: 1, color: Colors.grey.shade300),
+                    Expanded(flex: 7, child: _buildCartSection()),
+                  ],
+                )
+              : Stack(
+                  children: [
+                    _buildProductSection(),
+                    if (_cart.isNotEmpty)
+                      Positioned(
+                        bottom: 0,
+                        left: 0,
+                        right: 0,
+                        child: Container(
+                          padding: const EdgeInsets.all(20),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.1),
+                                blurRadius: 20,
+                                offset: const Offset(0, -5),
+                              ),
+                            ],
+                            borderRadius: const BorderRadius.vertical(
+                              top: Radius.circular(32),
+                            ),
                           ),
-                        );
-                      },
-                      child: Text(
-                        'Lihat Keranjang (${_cart.length} item) - Rp ${_grandTotal.toStringAsFixed(0)}',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
+                          child: ElevatedButton(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF0F2040),
+                              padding: const EdgeInsets.symmetric(vertical: 20),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(16),
+                              ),
+                            ),
+                            onPressed: () {
+                              showModalBottomSheet(
+                                context: context,
+                                isScrollControlled: true,
+                                backgroundColor: Colors.transparent,
+                                builder: (context) => Container(
+                                  height:
+                                      MediaQuery.of(context).size.height * 0.85,
+                                  decoration: const BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.vertical(
+                                      top: Radius.circular(32),
+                                    ),
+                                  ),
+                                  child: _buildCartSection(),
+                                ),
+                              );
+                            },
+                            child: Text(
+                              'Keranjang (${_cart.length}) - ${_currencyFormat.format(_grandTotal)}',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w900,
+                                fontSize: 16,
+                              ),
+                            ),
+                          ),
                         ),
                       ),
-                    ),
-                  ),
+                  ],
                 ),
-            ],
-          );
-        }
+        );
       },
     );
   }
 
   Widget _buildProductSection() {
+    final filteredMenus = _menus.where((m) {
+      final matchesSearch = m['name'].toString().toLowerCase().contains(
+        _searchQuery.toLowerCase(),
+      );
+      final matchesCategory =
+          _selectedCategory == null || m['category'] == _selectedCategory;
+      return matchesSearch && matchesCategory;
+    }).toList();
+
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.all(16.0),
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
           child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              const Text(
+                'Menu Restoran',
+                style: TextStyle(
+                  fontSize: 26,
+                  fontWeight: FontWeight.w900,
+                  color: Color(0xFF0F2040),
+                ),
+              ),
+              const SizedBox(height: 16),
               TextField(
                 onChanged: (val) => setState(() => _searchQuery = val),
                 decoration: InputDecoration(
-                  hintText: 'Cari menu atau SKU...',
-                  prefixIcon: const Icon(Icons.search),
+                  hintText: 'Cari nama menu...',
+                  hintStyle: TextStyle(color: Colors.grey.shade400),
+                  prefixIcon: const Icon(Icons.search, color: Colors.grey),
                   filled: true,
                   fillColor: Colors.white,
                   border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(16),
                     borderSide: BorderSide.none,
                   ),
+                  contentPadding: const EdgeInsets.symmetric(vertical: 16),
                 ),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 16),
               SizedBox(
                 height: 40,
                 child: ListView(
@@ -506,11 +650,24 @@ class _CashierTabState extends State<CashierTab> {
                     Padding(
                       padding: const EdgeInsets.only(right: 8.0),
                       child: ChoiceChip(
-                        label: const Text('Semua'),
+                        label: const Text(
+                          'Semua',
+                          style: TextStyle(fontWeight: FontWeight.bold),
+                        ),
                         selected: _selectedCategory == null,
+                        selectedColor: const Color(0xFF0F2040),
+                        labelStyle: TextStyle(
+                          color: _selectedCategory == null
+                              ? Colors.white
+                              : Colors.black87,
+                        ),
+                        backgroundColor: Colors.white,
+                        side: BorderSide.none,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
                         onSelected: (selected) {
                           setState(() => _selectedCategory = null);
-                          _fetchProducts();
                         },
                       ),
                     ),
@@ -518,15 +675,26 @@ class _CashierTabState extends State<CashierTab> {
                       (cat) => Padding(
                         padding: const EdgeInsets.only(right: 8.0),
                         child: ChoiceChip(
-                          label: Text(cat['name']),
-                          selected: _selectedCategory == cat['id'],
+                          label: Text(
+                            cat,
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          selected: _selectedCategory == cat,
+                          selectedColor: const Color(0xFF0F2040),
+                          labelStyle: TextStyle(
+                            color: _selectedCategory == cat
+                                ? Colors.white
+                                : Colors.black87,
+                          ),
+                          backgroundColor: Colors.white,
+                          side: BorderSide.none,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
                           onSelected: (selected) {
                             setState(
-                              () => _selectedCategory = selected
-                                  ? cat['id']
-                                  : null,
+                              () => _selectedCategory = selected ? cat : null,
                             );
-                            _fetchProducts();
                           },
                         ),
                       ),
@@ -534,87 +702,147 @@ class _CashierTabState extends State<CashierTab> {
                   ],
                 ),
               ),
+              const SizedBox(height: 10),
             ],
           ),
         ),
         Expanded(
           child: _isLoading
-              ? const Center(child: CircularProgressIndicator())
-              : GridView.builder(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 3,
-                    childAspectRatio: 0.85,
-                    crossAxisSpacing: 12,
-                    mainAxisSpacing: 12,
+              ? const Center(
+                  child: CircularProgressIndicator(color: Color(0xFF00B4D8)),
+                )
+              : filteredMenus.isEmpty
+              ? const Center(
+                  child: Text(
+                    "Belum ada menu di kategori ini.",
+                    style: TextStyle(color: Colors.grey),
                   ),
-                  itemCount: _products
-                      .where(
-                        (p) => p['name'].toLowerCase().contains(
-                          _searchQuery.toLowerCase(),
-                        ),
-                      )
-                      .length,
+                )
+              : GridView.builder(
+                  // PENTING: Padding bottom 120 agar item paling bawah tidak tertutup keranjang
+                  padding: const EdgeInsets.only(
+                    left: 20,
+                    right: 20,
+                    top: 10,
+                    bottom: 120,
+                  ),
+                  gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                    maxCrossAxisExtent: 180,
+                    childAspectRatio:
+                        0.62, // PERBAIKAN: Rasio dipanjangkan agar teks tidak bocor
+                    crossAxisSpacing: 16,
+                    mainAxisSpacing: 16,
+                  ),
+                  itemCount: filteredMenus.length,
                   itemBuilder: (context, index) {
-                    final filteredList = _products
-                        .where(
-                          (p) => p['name'].toLowerCase().contains(
-                            _searchQuery.toLowerCase(),
-                          ),
-                        )
-                        .toList();
-                    final product = filteredList[index];
+                    final menu = filteredMenus[index];
+                    final String? imageUrl = menu['image_url'];
+                    final int stock = (menu['stock'] as num?)?.toInt() ?? 0;
 
                     return InkWell(
-                      onTap: () => _addToCart(product),
-                      borderRadius: BorderRadius.circular(16),
+                      onTap: stock > 0 ? () => _addToCart(menu) : null,
+                      borderRadius: BorderRadius.circular(20),
                       child: Container(
                         decoration: BoxDecoration(
                           color: Colors.white,
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(color: Colors.grey.shade200),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  color: Colors.grey.shade100,
-                                  borderRadius: const BorderRadius.vertical(
-                                    top: Radius.circular(16),
-                                  ),
-                                ),
-                                child: const Center(
-                                  child: Icon(
-                                    Icons.fastfood,
-                                    color: Colors.grey,
-                                  ),
-                                ),
-                              ),
+                          borderRadius: BorderRadius.circular(20),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.03),
+                              blurRadius: 10,
+                              offset: const Offset(0, 4),
                             ),
-                            Padding(
-                              padding: const EdgeInsets.all(10.0),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    product['name'],
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.bold,
+                          ],
+                          border: stock <= 0
+                              ? Border.all(color: Colors.red.shade100, width: 2)
+                              : null,
+                        ),
+                        child: Stack(
+                          children: [
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                Expanded(
+                                  flex: 5, // Porsi gambar
+                                  child: ClipRRect(
+                                    borderRadius: const BorderRadius.vertical(
+                                      top: Radius.circular(20),
+                                    ),
+                                    child:
+                                        imageUrl != null && imageUrl.isNotEmpty
+                                        ? Image.network(
+                                            imageUrl,
+                                            fit: BoxFit.cover,
+                                            errorBuilder: (ctx, err, stack) =>
+                                                _buildPlaceholderImage(),
+                                          )
+                                        : _buildPlaceholderImage(),
+                                  ),
+                                ),
+                                Expanded(
+                                  flex: 4, // Porsi teks lebih lega sekarang
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(
+                                      10.0,
+                                    ), // Padding dikurangi sedikit
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        Text(
+                                          menu['name'],
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.w800,
+                                            fontSize: 13,
+                                            color: stock > 0
+                                                ? const Color(0xFF0F2040)
+                                                : Colors.grey,
+                                          ),
+                                        ),
+                                        Text(
+                                          _currencyFormat.format(
+                                            (menu['price'] as num).toDouble(),
+                                          ),
+                                          style: TextStyle(
+                                            color: stock > 0
+                                                ? const Color(0xFF00B4D8)
+                                                : Colors.grey,
+                                            fontWeight: FontWeight.w900,
+                                            fontSize: 14,
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                   ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    'Rp ${(product['base_price'] as num).toStringAsFixed(0)}',
-                                    style: const TextStyle(
-                                      color: Color(0xFF00B4D8),
-                                      fontWeight: FontWeight.bold,
-                                    ),
+                                ),
+                              ],
+                            ),
+                            Positioned(
+                              top: 8,
+                              right: 8,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 4,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: stock > 0
+                                      ? Colors.black.withValues(alpha: 0.6)
+                                      : Colors.red,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Text(
+                                  stock > 0 ? 'Stok: $stock' : 'Habis',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
                                   ),
-                                ],
+                                ),
                               ),
                             ),
                           ],
@@ -628,115 +856,264 @@ class _CashierTabState extends State<CashierTab> {
     );
   }
 
+  Widget _buildPlaceholderImage() {
+    return Container(
+      color: Colors.grey.shade100,
+      child: Center(
+        child: Icon(
+          Icons.fastfood_rounded,
+          color: Colors.grey.shade300,
+          size: 40,
+        ),
+      ),
+    );
+  }
+
   Widget _buildCartSection() {
     return Container(
       color: Colors.white,
-      padding: const EdgeInsets.all(16),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Keranjang Pesanan',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+          Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
+            ),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.shopping_bag_outlined,
+                  color: Color(0xFF0F2040),
+                  size: 28,
+                ),
+                const SizedBox(width: 12),
+                const Text(
+                  'Keranjang',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w900,
+                    color: Color(0xFF0F2040),
+                  ),
+                ),
+                const Spacer(),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF00B4D8).withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    '${_cart.length} Item',
+                    style: const TextStyle(
+                      color: Color(0xFF00B4D8),
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
-          const Divider(),
           Expanded(
             child: _cart.isEmpty
-                ? const Center(
-                    child: Text(
-                      'Belum ada item dipilih',
-                      style: TextStyle(color: Colors.grey),
+                ? Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.remove_shopping_cart_outlined,
+                          size: 64,
+                          color: Colors.grey.shade300,
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          'Belum ada pesanan',
+                          style: TextStyle(
+                            color: Colors.grey.shade500,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
                     ),
                   )
-                : ListView.builder(
+                : ListView.separated(
+                    padding: const EdgeInsets.all(24),
                     itemCount: _cart.length,
+                    separatorBuilder: (context, index) =>
+                        const Divider(height: 32),
                     itemBuilder: (context, index) {
                       final item = _cart[index];
-                      return ListTile(
-                        contentPadding: EdgeInsets.zero,
-                        title: Text(
-                          item.name,
-                          style: const TextStyle(fontWeight: FontWeight.bold),
-                        ),
-                        subtitle: Text(
-                          'Rp ${item.price.toStringAsFixed(0)} x ${item.qty}',
-                        ),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            IconButton(
-                              icon: const Icon(Icons.remove_circle_outline),
-                              onPressed: () => _updateQty(index, -1),
+                      return Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  item.name,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 15,
+                                    color: Color(0xFF0F2040),
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  _currencyFormat.format(item.price),
+                                  style: const TextStyle(
+                                    color: Colors.grey,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
                             ),
-                            Text(
-                              '${item.qty}',
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
+                          ),
+                          Row(
+                            children: [
+                              IconButton(
+                                icon: Icon(
+                                  Icons.remove_circle_outline,
+                                  color: Colors.grey.shade400,
+                                ),
+                                onPressed: () => _updateQty(index, -1),
                               ),
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.add_circle_outline),
-                              onPressed: () => _updateQty(index, 1),
-                            ),
-                          ],
-                        ),
+                              SizedBox(
+                                width: 30,
+                                child: Text(
+                                  '${item.qty}',
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w900,
+                                    fontSize: 16,
+                                  ),
+                                ),
+                              ),
+                              IconButton(
+                                icon: const Icon(
+                                  Icons.add_circle,
+                                  color: Color(0xFF00B4D8),
+                                ),
+                                onPressed: () => _updateQty(index, 1),
+                              ),
+                            ],
+                          ),
+                        ],
                       );
                     },
                   ),
           ),
-          const Divider(),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text('Subtotal'),
-              Text('Rp ${_subtotal.toStringAsFixed(0)}'),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text('Pajak (PB1 10%)'),
-              Text('Rp ${_tax.toStringAsFixed(0)}'),
-            ],
-          ),
-          const Divider(),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text(
-                'Total',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-              ),
-              Text(
-                'Rp ${_grandTotal.toStringAsFixed(0)}',
-                style: const TextStyle(
-                  fontWeight: FontWeight.w900,
-                  fontSize: 18,
-                  color: Color(0xFF00B4D8),
+          Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.05),
+                  blurRadius: 20,
+                  offset: const Offset(0, -10),
                 ),
+              ],
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(32),
               ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF00B4D8),
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              onPressed: _cart.isEmpty ? null : _showPaymentDialog,
-              child: const Text(
-                'Bayar Sekarang',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 16,
-                ),
+            ),
+            child: SafeArea(
+              top: false,
+              child: Column(
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'Subtotal',
+                        style: TextStyle(
+                          color: Colors.grey,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      Text(
+                        _currencyFormat.format(_subtotal),
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF0F2040),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'PB1 (10%)',
+                        style: TextStyle(
+                          color: Colors.grey,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      Text(
+                        _currencyFormat.format(_tax),
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF0F2040),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 16),
+                    child: Divider(height: 1),
+                  ),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'TOTAL',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w900,
+                          fontSize: 18,
+                          color: Color(0xFF0F2040),
+                        ),
+                      ),
+                      Text(
+                        _currencyFormat.format(_grandTotal),
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w900,
+                          fontSize: 24,
+                          color: Color(0xFF00B4D8),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 24),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 56,
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF0F2040),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        elevation: 0,
+                      ),
+                      onPressed: _cart.isEmpty ? null : _showPaymentDialog,
+                      child: const Text(
+                        'BAYAR SEKARANG',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w900,
+                          fontSize: 16,
+                          letterSpacing: 1,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ),

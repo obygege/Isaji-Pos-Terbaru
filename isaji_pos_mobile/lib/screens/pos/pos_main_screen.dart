@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:responsive_builder/responsive_builder.dart';
 
-// Import Tabs yang sudah kita buat sebelumnya
+import 'tabs/dashboard_tab.dart';
 import 'tabs/cashier_tab.dart';
 import 'tabs/active_orders_tab.dart';
 import 'tabs/history_tab.dart';
 
-// Import layar Tutup Shift
+import '../settings/printer_settings_screen.dart';
 import '../shift/close_shift_screen.dart';
 
 class PosMainScreen extends StatefulWidget {
@@ -19,8 +19,8 @@ class PosMainScreen extends StatefulWidget {
 class _PosMainScreenState extends State<PosMainScreen> {
   int _selectedIndex = 0;
 
-  // Daftar Tab yang akan ditampilkan di dalam IndexedStack
   final List<Widget> _tabs = const [
+    DashboardTab(),
     CashierTab(),
     ActiveOrdersTab(),
     HistoryTab(),
@@ -32,7 +32,13 @@ class _PosMainScreenState extends State<PosMainScreen> {
     });
   }
 
-  // Fungsi untuk memanggil layar Tutup Shift (Settlement)
+  void _goToSettings() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const PrinterSettingsScreen()),
+    );
+  }
+
   void _goToCloseShift() {
     Navigator.push(
       context,
@@ -53,71 +59,161 @@ class _PosMainScreenState extends State<PosMainScreen> {
         if (isMobile) {
           return Scaffold(
             appBar: AppBar(
-              title: const Text(
-                'Isaji POS',
-                style: TextStyle(fontWeight: FontWeight.bold),
+              // Menampilkan Logo Isaji di Mobile
+              title: Image.asset(
+                'assets/images/LOGO.png',
+                height: 36,
+                fit: BoxFit.contain,
               ),
+              centerTitle: false,
               backgroundColor: Colors.white,
+              elevation: 0,
               actions: [
                 IconButton(
-                  icon: const Icon(Icons.logout, color: Colors.redAccent),
+                  icon: const Icon(Icons.settings, color: Colors.grey),
+                  tooltip: 'Pengaturan',
+                  onPressed: _goToSettings,
+                ),
+                IconButton(
+                  icon: const Icon(
+                    Icons.power_settings_new,
+                    color: Colors.redAccent,
+                  ),
                   tooltip: 'Tutup Shift',
                   onPressed: _goToCloseShift,
                 ),
               ],
             ),
             body: IndexedStack(index: _selectedIndex, children: _tabs),
-            bottomNavigationBar: BottomNavigationBar(
-              currentIndex: _selectedIndex,
-              onTap: _onItemTapped,
-              selectedItemColor: const Color(0xFF00B4D8),
-              unselectedItemColor: Colors.grey,
-              items: const [
-                BottomNavigationBarItem(
-                  icon: Icon(Icons.point_of_sale),
-                  label: 'Kasir',
+            bottomNavigationBar: Container(
+              decoration: BoxDecoration(
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.05),
+                    blurRadius: 10,
+                    offset: const Offset(0, -5),
+                  ),
+                ],
+              ),
+              child: BottomNavigationBar(
+                currentIndex: _selectedIndex,
+                onTap: _onItemTapped,
+                type: BottomNavigationBarType.fixed,
+                backgroundColor: Colors.white,
+                selectedItemColor: const Color(0xFF00B4D8),
+                unselectedItemColor: Colors.grey.shade400,
+                showUnselectedLabels: true,
+                selectedLabelStyle: const TextStyle(
+                  fontWeight: FontWeight.bold,
                 ),
-                BottomNavigationBarItem(
-                  icon: Icon(Icons.list_alt),
-                  label: 'Pesanan',
-                ),
-                BottomNavigationBarItem(
-                  icon: Icon(Icons.history),
-                  label: 'Riwayat',
-                ),
-              ],
+                items: const [
+                  BottomNavigationBarItem(
+                    icon: Icon(Icons.dashboard_rounded),
+                    label: 'Beranda',
+                  ),
+                  BottomNavigationBarItem(
+                    icon: Icon(Icons.point_of_sale),
+                    label: 'Kasir',
+                  ),
+                  BottomNavigationBarItem(
+                    icon: Icon(Icons.list_alt),
+                    label: 'Pesanan',
+                  ),
+                  BottomNavigationBarItem(
+                    icon: Icon(Icons.history),
+                    label: 'Riwayat',
+                  ),
+                ],
+              ),
             ),
           );
         }
 
         // ==========================================
-        // LAYOUT UNTUK TABLET / DESKTOP
+        // LAYOUT UNTUK TABLET / DESKTOP (SIDEBAR)
         // ==========================================
         return Scaffold(
           body: Row(
             children: [
               // Sidebar Navigation
               Container(
-                width: 100,
-                color: const Color(0xFF0F2040),
+                width: 110,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0F2040),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.1),
+                      blurRadius: 10,
+                    ),
+                  ],
+                ),
                 child: Column(
                   children: [
                     const SizedBox(height: 32),
-                    const Icon(Icons.storefront, color: Colors.white, size: 40),
-                    const SizedBox(height: 32),
+                    // LOGO ISAJI DI SIDEBAR TABLET
+                    Container(
+                      margin: const EdgeInsets.symmetric(horizontal: 16),
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(16),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.2),
+                            blurRadius: 10,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: Image.asset(
+                        'assets/images/LOGO.png',
+                        height: 48,
+                        fit: BoxFit.contain,
+                      ),
+                    ),
+                    const SizedBox(height: 40),
 
-                    _buildNavItem(Icons.point_of_sale, 'Kasir', 0),
-                    _buildNavItem(Icons.list_alt, 'Pesanan', 1),
-                    _buildNavItem(Icons.history, 'Riwayat', 2),
+                    _buildNavItem(Icons.dashboard_rounded, 'Beranda', 0),
+                    _buildNavItem(Icons.point_of_sale, 'Kasir', 1),
+                    _buildNavItem(Icons.list_alt, 'Pesanan', 2),
+                    _buildNavItem(Icons.history, 'Riwayat', 3),
 
                     const Spacer(),
 
-                    // Tombol Tutup Shift di Sidebar Bawah
+                    // FOOTER: Tombol Pengaturan
+                    InkWell(
+                      onTap: _goToSettings,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 20),
+                        width: double.infinity,
+                        child: const Column(
+                          children: [
+                            Icon(
+                              Icons.settings,
+                              color: Colors.white70,
+                              size: 28,
+                            ),
+                            SizedBox(height: 8),
+                            Text(
+                              'Setting',
+                              style: TextStyle(
+                                color: Colors.white70,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+
+                    // FOOTER: Tombol Tutup Shift
                     InkWell(
                       onTap: _goToCloseShift,
                       child: Container(
-                        padding: const EdgeInsets.symmetric(vertical: 24),
+                        padding: const EdgeInsets.symmetric(vertical: 20),
                         width: double.infinity,
+                        color: Colors.redAccent.withValues(alpha: 0.1),
                         child: const Column(
                           children: [
                             Icon(
@@ -139,6 +235,7 @@ class _PosMainScreenState extends State<PosMainScreen> {
                         ),
                       ),
                     ),
+                    const SizedBox(height: 16),
                   ],
                 ),
               ),
@@ -154,17 +251,17 @@ class _PosMainScreenState extends State<PosMainScreen> {
     );
   }
 
-  // Widget pembantu untuk menggambar tombol menu di Sidebar (Tablet)
+  // Desain Tombol Menu Sidebar
   Widget _buildNavItem(IconData icon, String label, int index) {
     final isSelected = _selectedIndex == index;
     return InkWell(
       onTap: () => _onItemTapped(index),
       child: Container(
         width: double.infinity,
-        padding: const EdgeInsets.symmetric(vertical: 24),
+        padding: const EdgeInsets.symmetric(vertical: 20),
         decoration: BoxDecoration(
           color: isSelected
-              ? const Color(0xFF00B4D8).withValues(alpha: 0.2)
+              ? const Color(0xFF00B4D8).withValues(alpha: 0.15)
               : Colors.transparent,
           border: Border(
             right: BorderSide(
@@ -177,16 +274,16 @@ class _PosMainScreenState extends State<PosMainScreen> {
           children: [
             Icon(
               icon,
-              color: isSelected ? const Color(0xFF00B4D8) : Colors.grey,
+              color: isSelected ? const Color(0xFF00B4D8) : Colors.white54,
               size: 28,
             ),
             const SizedBox(height: 8),
             Text(
               label,
               style: TextStyle(
-                color: isSelected ? const Color(0xFF00B4D8) : Colors.grey,
-                fontSize: 12,
-                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                color: isSelected ? const Color(0xFF00B4D8) : Colors.white54,
+                fontSize: 13,
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.w600,
               ),
             ),
           ],

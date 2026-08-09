@@ -21,9 +21,7 @@ class _PinLoginScreenState extends State<PinLoginScreen> {
 
   void _onPinTap(String number) {
     if (_branchCodeController.text.trim().isEmpty) {
-      setState(() {
-        _errorMessage = 'Masukkan Kode Cabang terlebih dahulu!';
-      });
+      setState(() => _errorMessage = 'Masukkan Kode Cabang terlebih dahulu!');
       return;
     }
 
@@ -40,9 +38,7 @@ class _PinLoginScreenState extends State<PinLoginScreen> {
 
   void _onBackspace() {
     if (_pin.isNotEmpty) {
-      setState(() {
-        _pin = _pin.substring(0, _pin.length - 1);
-      });
+      setState(() => _pin = _pin.substring(0, _pin.length - 1));
     }
   }
 
@@ -76,19 +72,19 @@ class _PinLoginScreenState extends State<PinLoginScreen> {
 
       final branchId = branchRes['id'];
 
-      // DIPERBAIKI: Menambahkan user_id pada select()
       final empRes = await supabase
           .from('employees')
           .select(
-            'id, user_id, full_name, branch_id, organization_id, position, is_active',
+            'id, full_name, branch_id, organization_id, position, is_active',
           )
           .eq('pin', _pin)
           .eq('branch_id', branchId)
+          .ilike('position', '%kasir%')
           .maybeSingle();
 
       if (empRes == null) {
         setState(() {
-          _errorMessage = 'PIN salah atau bukan karyawan cabang ini!';
+          _errorMessage = 'PIN salah atau Anda bukan terdaftar sebagai Kasir!';
           _pin = '';
         });
         return;
@@ -102,23 +98,17 @@ class _PinLoginScreenState extends State<PinLoginScreen> {
         return;
       }
 
-      // DIPERBAIKI: Simpan user_id ke dalam session
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('emp_id', empRes['id']);
-      await prefs.setString(
-        'user_id',
-        empRes['user_id'] ?? '',
-      ); // Menyimpan user_id
       await prefs.setString('branch_id', empRes['branch_id'] ?? '');
       await prefs.setString('org_id', empRes['organization_id'] ?? '');
       await prefs.setString('emp_name', empRes['full_name']);
 
-      // DIPERBAIKI: Gunakan user_id untuk mengecek tabel cashier_shifts
       final activeShift = await supabase
           .from('cashier_shifts')
           .select('id')
-          .eq('branch_id', empRes['branch_id'])
-          .eq('cashier_id', empRes['user_id'])
+          .eq('branch_id', branchId)
+          .eq('cashier_id', empRes['id'])
           .isFilter('closed_at', null)
           .maybeSingle();
 
@@ -131,6 +121,10 @@ class _PinLoginScreenState extends State<PinLoginScreen> {
         );
       } else {
         await prefs.setString('shift_id', activeShift['id']);
+
+        // ---> PERBAIKAN DI SINI <---
+        if (!mounted) return;
+
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(builder: (context) => const PosMainScreen()),
@@ -142,16 +136,14 @@ class _PinLoginScreenState extends State<PinLoginScreen> {
         _pin = '';
       });
     } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF9FAFB),
+      backgroundColor: const Color(0xFFF4F7FE),
       body: ResponsiveBuilder(
         builder: (context, sizingInformation) {
           bool isTablet =
@@ -161,15 +153,21 @@ class _PinLoginScreenState extends State<PinLoginScreen> {
             child: SingleChildScrollView(
               child: Container(
                 width: isTablet ? 450 : double.infinity,
-                padding: const EdgeInsets.all(32),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 40,
+                  vertical: 48,
+                ),
                 decoration: isTablet
                     ? BoxDecoration(
                         color: Colors.white,
-                        borderRadius: BorderRadius.circular(24),
+                        borderRadius: BorderRadius.circular(32),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.05),
-                            blurRadius: 20,
+                            color: const Color(
+                              0xFF0F2040,
+                            ).withValues(alpha: 0.08),
+                            blurRadius: 30,
+                            offset: const Offset(0, 10),
                           ),
                         ],
                       )
@@ -178,17 +176,12 @@ class _PinLoginScreenState extends State<PinLoginScreen> {
                   mainAxisAlignment: MainAxisAlignment.center,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Text(
-                      'ISAJI POS',
-                      style: TextStyle(
-                        fontSize: 28,
-                        fontWeight: FontWeight.w900,
-                        color: Color(0xFF0F2040),
-                      ),
+                    Image.asset(
+                      'assets/images/LOGO.png',
+                      height: 100,
+                      fit: BoxFit.contain,
                     ),
-                    const SizedBox(height: 8),
-                    const Text('Sistem Manajemen F&B'),
-                    const SizedBox(height: 32),
+                    const SizedBox(height: 40),
 
                     TextField(
                       controller: _branchCodeController,
@@ -196,50 +189,84 @@ class _PinLoginScreenState extends State<PinLoginScreen> {
                       decoration: InputDecoration(
                         labelText: 'Kode Cabang',
                         hintText: 'Contoh: JKT01',
-                        prefixIcon: const Icon(Icons.storefront),
+                        prefixIcon: const Icon(
+                          Icons.storefront,
+                          color: Color(0xFF00B4D8),
+                        ),
                         filled: true,
-                        fillColor: Colors.white,
+                        fillColor: Colors.grey.shade50,
                         border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
+                          borderRadius: BorderRadius.circular(16),
+                          borderSide: BorderSide(color: Colors.grey.shade200),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          borderSide: BorderSide(color: Colors.grey.shade200),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(16),
+                          borderSide: const BorderSide(
+                            color: Color(0xFF00B4D8),
+                            width: 2,
+                          ),
                         ),
                       ),
                     ),
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 32),
 
-                    const Text('Masukkan 6 Digit PIN Karyawan'),
-                    const SizedBox(height: 16),
+                    const Text(
+                      'Masukkan 6 Digit PIN Karyawan',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF0F2040),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
 
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: List.generate(6, (index) {
                         return Container(
-                          margin: const EdgeInsets.symmetric(horizontal: 8),
-                          width: 16,
-                          height: 16,
+                          margin: const EdgeInsets.symmetric(horizontal: 10),
+                          width: 18,
+                          height: 18,
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
                             color: index < _pin.length
                                 ? const Color(0xFF00B4D8)
-                                : Colors.grey.shade300,
+                                : Colors.grey.shade200,
+                            boxShadow: index < _pin.length
+                                ? [
+                                    BoxShadow(
+                                      color: const Color(
+                                        0xFF00B4D8,
+                                      ).withValues(alpha: 0.4),
+                                      blurRadius: 8,
+                                      offset: const Offset(0, 2),
+                                    ),
+                                  ]
+                                : null,
                           ),
                         );
                       }),
                     ),
 
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 24),
                     if (_errorMessage.isNotEmpty)
                       Text(
                         _errorMessage,
                         textAlign: TextAlign.center,
                         style: const TextStyle(
-                          color: Colors.red,
+                          color: Colors.redAccent,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
                     if (_isLoading)
                       const Padding(
                         padding: EdgeInsets.all(8.0),
-                        child: CircularProgressIndicator(),
+                        child: CircularProgressIndicator(
+                          color: Color(0xFF00B4D8),
+                        ),
                       ),
 
                     const SizedBox(height: 32),
@@ -250,9 +277,9 @@ class _PinLoginScreenState extends State<PinLoginScreen> {
                       gridDelegate:
                           const SliverGridDelegateWithFixedCrossAxisCount(
                             crossAxisCount: 3,
-                            childAspectRatio: 1.5,
-                            mainAxisSpacing: 10,
-                            crossAxisSpacing: 10,
+                            childAspectRatio: 1.4,
+                            mainAxisSpacing: 16,
+                            crossAxisSpacing: 16,
                           ),
                       itemCount: 12,
                       itemBuilder: (context, index) {
@@ -262,7 +289,7 @@ class _PinLoginScreenState extends State<PinLoginScreen> {
                             onPressed: _onBackspace,
                             icon: const Icon(
                               Icons.backspace_outlined,
-                              size: 28,
+                              size: 32,
                             ),
                             color: const Color(0xFF0F2040),
                           );
@@ -270,19 +297,29 @@ class _PinLoginScreenState extends State<PinLoginScreen> {
                         final number = index == 10 ? '0' : '${index + 1}';
                         return InkWell(
                           onTap: () => _onPinTap(number),
-                          borderRadius: BorderRadius.circular(16),
+                          borderRadius: BorderRadius.circular(20),
+                          splashColor: const Color(
+                            0xFF00B4D8,
+                          ).withValues(alpha: 0.2),
                           child: Container(
                             decoration: BoxDecoration(
                               color: Colors.white,
-                              borderRadius: BorderRadius.circular(16),
-                              border: Border.all(color: Colors.grey.shade200),
+                              borderRadius: BorderRadius.circular(20),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withValues(alpha: 0.03),
+                                  blurRadius: 10,
+                                  offset: const Offset(0, 4),
+                                ),
+                              ],
                             ),
                             child: Center(
                               child: Text(
                                 number,
                                 style: const TextStyle(
-                                  fontSize: 24,
-                                  fontWeight: FontWeight.bold,
+                                  fontSize: 28,
+                                  fontWeight: FontWeight.w900,
+                                  color: Color(0xFF0F2040),
                                 ),
                               ),
                             ),
