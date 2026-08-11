@@ -5,25 +5,54 @@ import supabase from '../backend/lib/supabaseClient';
 function SubscriptionPlan({ user, orgData, isOptional, onClose }) {
     const [loading, setLoading] = useState(false);
     const [step, setStep] = useState(1);
-    const [selectedPlan, setSelectedPlan] = useState(null);
-    const [selectedPriceText, setSelectedPriceText] = useState('');
+    const [selectedPlan, setSelectedPlan] = useState(null); // sekarang berupa objek plan dari DB
     const [companyName, setCompanyName] = useState(orgData?.name || '');
+    const [plans, setPlans] = useState([]);
+    const [plansLoading, setPlansLoading] = useState(true);
 
     const isTrialBlocked = orgData?.subscription_status === 'expired' || orgData?.trial_ends_at;
 
+    // Muat Snap.js dari Midtrans (sandbox/production ditentukan oleh env)
     useEffect(() => {
-        const snapScript = "https://app.sandbox.midtrans.com/snap/snap.js";
-        const clientKey = process.env.REACT_APP_MIDTRANS_CLIENT_KEY || 'SB-Mid-client-XXXXX';
+        const isProd = process.env.REACT_APP_MIDTRANS_IS_PRODUCTION === 'true';
+        const snapScript = isProd
+            ? 'https://app.midtrans.com/snap/snap.js'
+            : 'https://app.sandbox.midtrans.com/snap/snap.js';
+        const clientKey = process.env.REACT_APP_MIDTRANS_CLIENT_KEY;
+
+        if (!clientKey) {
+            console.warn('REACT_APP_MIDTRANS_CLIENT_KEY belum diisi di .env — pembayaran non-trial tidak akan berfungsi.');
+        }
 
         const script = document.createElement('script');
         script.src = snapScript;
-        script.setAttribute('data-client-key', clientKey);
+        script.setAttribute('data-client-key', clientKey || '');
         script.async = true;
         document.body.appendChild(script);
 
         return () => {
             document.body.removeChild(script);
         };
+    }, []);
+
+    // Ambil daftar paket & fitur LANGSUNG dari tabel subscription_plans di database
+    useEffect(() => {
+        const fetchPlans = async () => {
+            setPlansLoading(true);
+            const { data, error } = await supabase
+                .from('subscription_plans')
+                .select('*')
+                .eq('is_active', true)
+                .order('sort_order', { ascending: true });
+
+            if (error) {
+                console.error('Gagal memuat paket langganan:', error.message);
+            } else {
+                setPlans(data || []);
+            }
+            setPlansLoading(false);
+        };
+        fetchPlans();
     }, []);
 
     const processToDatabase = async (payload) => {
@@ -46,9 +75,8 @@ function SubscriptionPlan({ user, orgData, isOptional, onClose }) {
         }
     };
 
-    const handlePlanClick = (planType, priceText) => {
-        setSelectedPlan(planType);
-        setSelectedPriceText(priceText);
+    const handlePlanClick = (plan) => {
+        setSelectedPlan(plan);
         setStep(2);
     };
 
@@ -68,37 +96,55 @@ function SubscriptionPlan({ user, orgData, isOptional, onClose }) {
         let payload = {
             name: companyName,
             subdomain: generatedSubdomain,
-            subscription_plan: selectedPlan,
+            subscription_plan: selectedPlan.plan_code,
         };
 
-        if (selectedPlan === 'trial') {
+        // Paket TRIAL tetap gratis, langsung aktif tanpa ke Midtrans
+        if (selectedPlan.plan_code === 'trial') {
             const trialEndDate = new Date();
-            trialEndDate.setDate(trialEndDate.getDate() + 7);
+            trialEndDate.setDate(trialEndDate.getDate() + (selectedPlan.duration_days || 7));
 
             payload.subscription_status = 'trialing';
             payload.trial_ends_at = trialEndDate.toISOString();
+            payload.current_plan_id = selectedPlan.id;
 
             await processToDatabase(payload);
             return;
         }
 
+        // Paket berbayar: minta Snap Token ASLI dari backend (Supabase Edge Function),
+        // yang di dalamnya memanggil API Midtrans dengan server_key yang aman (tidak pernah ke browser)
         try {
-            const token = "TOKEN_DARI_BACKEND_ANDA";
+            const { data, error } = await supabase.functions.invoke('create-snap-token', {
+                body: {
+                    plan_code: selectedPlan.plan_code,
+                    organization_id: orgData?.id || null,
+                    customer_name: companyName,
+                    customer_email: user?.email,
+                },
+            });
 
-            if (!window.snap) {
-                console.warn("Midtrans Snap tidak ditemukan. Simulasi Bypass Sukses.");
-                payload.subscription_status = 'active';
-                await processToDatabase(payload);
+            if (error || !data?.token) {
+                console.error(error || data);
+                alert("Gagal membuat sesi pembayaran Midtrans. Coba lagi atau hubungi support.");
+                setLoading(false);
                 return;
             }
 
-            window.snap.pay(token, {
+            if (!window.snap) {
+                alert("Modul pembayaran Midtrans belum termuat, coba refresh halaman.");
+                setLoading(false);
+                return;
+            }
+
+            window.snap.pay(data.token, {
                 onSuccess: function (result) {
-                    payload.subscription_status = 'active';
-                    processToDatabase(payload);
+                    // Status final tetap dipastikan valid lewat webhook (midtrans-webhook function).
+                    // Di sini kita hanya reload agar UI mengambil status terbaru dari DB.
+                    window.location.reload();
                 },
                 onPending: function (result) {
-                    alert("Menunggu pembayaran Anda.");
+                    alert("Menunggu pembayaran Anda. Status akan otomatis terupdate setelah pembayaran dikonfirmasi Midtrans.");
                     setLoading(false);
                 },
                 onError: function (result) {
@@ -112,22 +158,22 @@ function SubscriptionPlan({ user, orgData, isOptional, onClose }) {
             });
 
         } catch (error) {
+            console.error(error);
             alert("Terjadi kesalahan sistem pembayaran.");
             setLoading(false);
         }
     };
 
-    const PlanCard = ({ title, priceText, desc, features, planType, isPopular, isBlocked }) => (
+    const PlanCard = ({ plan, isPopular, isBlocked }) => (
         <div className={`relative bg-white rounded-2xl border ${isBlocked ? 'border-gray-200 bg-gray-50 opacity-70' : isPopular ? 'border-isaji-orange shadow-orange-100/50 shadow-xl scale-105 z-10' : 'border-gray-200 shadow-sm'} p-6 flex flex-col transition-all`}>
             {isPopular && !isBlocked && <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-isaji-orange text-white px-3 py-1 rounded-full text-xs font-bold uppercase tracking-widest">Paling Laris</div>}
-            <h3 className="text-lg font-bold text-gray-900">{title}</h3>
-            <p className="text-sm text-gray-500 mt-1 h-10">{desc}</p>
+            <h3 className="text-lg font-bold text-gray-900">{plan.name}</h3>
             <div className="my-5">
-                <span className="text-3xl font-extrabold text-gray-900">{priceText}</span>
-                {priceText !== 'Gratis' && <span className="text-sm text-gray-500 font-medium">/bulan</span>}
+                <span className="text-3xl font-extrabold text-gray-900">{plan.price_text}</span>
+                {plan.price_text !== 'Gratis' && <span className="text-sm text-gray-500 font-medium">/bulan</span>}
             </div>
             <ul className="space-y-3 mb-8 flex-1">
-                {features.map((feat, idx) => (
+                {(plan.features || []).map((feat, idx) => (
                     <li key={idx} className="flex items-start gap-2 text-sm text-gray-700">
                         <span className={`${isBlocked ? 'text-gray-400' : 'text-green-500'} font-bold`}>✓</span> {feat}
                     </li>
@@ -135,12 +181,12 @@ function SubscriptionPlan({ user, orgData, isOptional, onClose }) {
             </ul>
             <button
                 onClick={() => {
-                    if (!isBlocked) handlePlanClick(planType, priceText);
+                    if (!isBlocked) handlePlanClick(plan);
                 }}
                 disabled={isBlocked}
                 className={`w-full py-3 rounded-xl font-bold transition-all ${isBlocked ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : isPopular ? 'bg-isaji-orange text-white hover:bg-orange-600' : 'bg-gray-50 text-gray-900 border border-gray-200 hover:bg-gray-100'}`}
             >
-                {isBlocked ? 'Pernah Digunakan' : planType === 'trial' ? 'Mulai Coba Gratis' : 'Pilih Paket Ini'}
+                {isBlocked ? 'Pernah Digunakan' : plan.plan_code === 'trial' ? 'Mulai Coba Gratis' : 'Pilih Paket Ini'}
             </button>
         </div>
     );
@@ -168,12 +214,20 @@ function SubscriptionPlan({ user, orgData, isOptional, onClose }) {
                         </p>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 w-full mb-6">
-                        <PlanCard title="Trial 7 Hari" priceText="Gratis" planType="trial" desc="Coba seluruh fitur ISAJI tanpa komitmen." features={["Maksimal 1 Cabang", "Dukungan Dasar"]} isBlocked={isTrialBlocked} />
-                        <PlanCard title="Paket Pro" priceText="Rp 99rb" planType="pro" desc="Cocok untuk kedai kecil yang merintis." features={["Maksimal 2 Cabang", "Manajemen 5 Karyawan"]} />
-                        <PlanCard title="Professional" priceText="Rp 199rb" planType="professional" isPopular={true} desc="Sempurna untuk bisnis berkembang." features={["Maksimal 5 Cabang", "Karyawan Unlimited"]} />
-                        <PlanCard title="Ultra" priceText="Rp 299rb" planType="ultra" desc="Solusi untuk jaringan bisnis besar." features={["Cabang Unlimited", "Dedicated Manager"]} />
-                    </div>
+                    {plansLoading ? (
+                        <div className="py-16 text-gray-400 font-medium">Memuat paket langganan...</div>
+                    ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 w-full mb-6">
+                            {plans.map((plan) => (
+                                <PlanCard
+                                    key={plan.plan_code}
+                                    plan={plan}
+                                    isPopular={plan.plan_code === 'professional'}
+                                    isBlocked={plan.plan_code === 'trial' ? isTrialBlocked : false}
+                                />
+                            ))}
+                        </div>
+                    )}
 
                     {/* Tombol Bawah Menyesuaikan Kondisi */}
                     {isOptional ? (
@@ -189,7 +243,7 @@ function SubscriptionPlan({ user, orgData, isOptional, onClose }) {
             )}
 
             {/* LANGKAH 2 */}
-            {step === 2 && (
+            {step === 2 && selectedPlan && (
                 <div className="bg-white w-full max-w-lg rounded-3xl p-8 shadow-2xl relative flex flex-col border border-gray-200 animate-in slide-in-from-right duration-300">
 
                     {/* TOMBOL KEMBALI KE LANGKAH 1 */}
@@ -206,7 +260,7 @@ function SubscriptionPlan({ user, orgData, isOptional, onClose }) {
 
                     <div className="text-center mb-6 mt-4">
                         <span className="bg-orange-50 text-isaji-orange px-3 py-1 rounded-full text-xs font-bold uppercase tracking-widest mb-3 inline-block">
-                            Paket Terpilih: {selectedPlan === 'trial' ? 'TRIAL 7 HARI' : selectedPlan.toUpperCase()}
+                            Paket Terpilih: {selectedPlan.name}
                         </span>
                         <h2 className="text-2xl font-extrabold text-gray-900">Konfirmasi Bisnis</h2>
                         <p className="text-gray-500 text-sm mt-2">Lengkapi data di bawah ini untuk mengaktifkan sistem.</p>
@@ -225,12 +279,12 @@ function SubscriptionPlan({ user, orgData, isOptional, onClose }) {
                             />
                         </div>
 
-                        {selectedPlan === 'trial' && (
+                        {selectedPlan.plan_code === 'trial' && (
                             <div className="bg-gray-50 p-4 rounded-xl border border-gray-100 text-xs text-gray-600 leading-relaxed space-y-2">
                                 <p className="font-bold text-gray-900">Syarat & Ketentuan Trial:</p>
-                                <p>• Akses gratis ke seluruh fitur operasional selama 7 Hari.</p>
+                                <p>• Akses gratis ke seluruh fitur operasional selama {selectedPlan.duration_days} Hari.</p>
                                 <p>• Tidak diperlukan informasi kartu kredit.</p>
-                                <p>• Setelah 7 hari, akses operasional akan diblokir hingga Anda melakukan *upgrade* paket.</p>
+                                <p>• Setelah masa trial habis, akses operasional akan diblokir hingga Anda melakukan *upgrade* paket.</p>
                                 <p>• Seluruh data yang dimasukkan (cabang, menu, dll) tidak akan hilang setelah masa trial habis.</p>
                             </div>
                         )}
@@ -242,10 +296,10 @@ function SubscriptionPlan({ user, orgData, isOptional, onClose }) {
                         >
                             {loading ? (
                                 'Memproses...'
-                            ) : selectedPlan === 'trial' ? (
+                            ) : selectedPlan.plan_code === 'trial' ? (
                                 'Setuju & Mulai Trial Sekarang'
                             ) : (
-                                `Lanjut Bayar - ${selectedPriceText}`
+                                `Lanjut Bayar - ${selectedPlan.price_text}`
                             )}
                         </button>
                     </form>
