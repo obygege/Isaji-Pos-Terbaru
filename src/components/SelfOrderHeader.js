@@ -1,50 +1,79 @@
-import React from 'react';
+import React, { useState } from 'react';
 
-function SelfOrderHeader({ branch, activeTab, setActiveTab, customerProfile, onLogoutMember }) {
+function SelfOrderHeader({ branch, tableInfo, activeTab, setActiveTab, customerProfile, onLogoutMember }) {
+    const [showMenu, setShowMenu] = useState(false);
+    const initials = (customerProfile?.full_name || 'M').trim().charAt(0).toUpperCase();
+
     return (
-        <div className="bg-white px-5 py-3 flex justify-between items-center shadow-sm z-40 sticky top-0">
-            <div className="flex items-center gap-3">
-                {activeTab !== 'menu' && activeTab !== 'success' ? (
-                    <button
-                        onClick={() => setActiveTab(activeTab === 'checkout' ? 'cart' : 'menu')}
-                        className="p-1.5 bg-gray-100 text-gray-600 rounded-full hover:bg-gray-200 transition-colors"
-                    >
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15 19l-7-7 7-7"></path></svg>
-                    </button>
-                ) : (
-                    <div className="flex items-center gap-2">
-                        {branch?.logo_url ? (
-                            <img src={branch.logo_url} alt="Logo" className="w-8 h-8 rounded-full object-cover border border-gray-200" onError={(e) => { e.target.style.display = 'none' }} />
-                        ) : (
-                            <div className="w-8 h-8 bg-gradient-to-tr from-isaji-orange to-orange-400 rounded-full flex items-center justify-center text-white font-black text-xs shadow-sm">
-                                {branch?.name?.charAt(0) || 'B'}
-                            </div>
-                        )}
-                        <h1 className="text-sm font-black text-gray-800 line-clamp-1">{branch?.name || 'Memuat...'}</h1>
-                    </div>
-                )}
-            </div>
-
-            <div className="flex items-center gap-1.5">
-                {/* Tombol Bantuan WA */}
-                <button onClick={() => window.open(`https://wa.me/${branch?.phone || ''}?text=Halo%20Admin,%20saya%20butuh%20bantuan%20di%20Self-Order`, '_blank')} className="p-2 text-isaji-navy hover:bg-blue-50 rounded-full transition-colors" title="Customer Service">
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path></svg>
-                </button>
-                {/* Status Member: kalau sudah login tampilkan nama + logout, kalau belum tampilkan tombol Login/Daftar */}
-                {customerProfile ? (
-                    <div className="flex items-center gap-1.5">
-                        <span className="text-[10px] font-black text-isaji-navy bg-blue-50 px-3 py-1.5 rounded-full uppercase tracking-wider max-w-[100px] truncate" title={customerProfile.full_name}>
-                            Halo, {customerProfile.full_name?.split(' ')[0]}
-                        </span>
-                        <button onClick={onLogoutMember} className="p-2 text-gray-400 hover:text-red-500 rounded-full transition-colors" title="Keluar dari akun member">
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
+        <div className="bg-isaji-navy px-5 pt-4 pb-5 rounded-b-[1.75rem] shadow-lg z-40 sticky top-0 animate-fade-in">
+            <div className="flex justify-between items-start">
+                <div className="flex items-center gap-2.5 min-w-0">
+                    {activeTab !== 'menu' && activeTab !== 'success' ? (
+                        <button
+                            onClick={() => setActiveTab(activeTab === 'checkout' ? 'cart' : 'menu')}
+                            className="p-2 bg-white/10 text-white rounded-full hover:bg-white/20 active:scale-90 transition-all shrink-0"
+                        >
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15 19l-7-7 7-7"></path></svg>
                         </button>
+                    ) : (
+                        <div className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center shrink-0 overflow-hidden border border-white/10">
+                            {branch?.logo_url ? (
+                                <img src={branch.logo_url} alt="Logo" className="w-full h-full object-cover" onError={(e) => { e.target.style.display = 'none' }} />
+                            ) : (
+                                <span className="text-white font-black text-xs">{branch?.name?.charAt(0) || 'B'}</span>
+                            )}
+                        </div>
+                    )}
+                    <div className="min-w-0">
+                        <p className="text-[10px] text-blue-200 font-semibold uppercase tracking-wider flex items-center gap-1">
+                            <svg className="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a2 2 0 01-2.828 0l-4.243-4.243a8 8 0 1111.314 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                            {branch?.name || 'Memuat...'}
+                        </p>
+                        <h1 className="text-sm font-black text-white line-clamp-1">
+                            {tableInfo?.name ? `Meja ${tableInfo.name}` : 'Self Order'}
+                        </h1>
                     </div>
-                ) : (
-                    <button onClick={() => window.location.href = '/customer-login'} className="text-[10px] font-black text-white bg-isaji-navy px-3 py-1.5 rounded-full uppercase tracking-wider shadow-sm hover:bg-blue-900 transition-colors">
-                        Login / Daftar
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                    <button
+                        onClick={() => window.open(`https://wa.me/${branch?.phone || ''}?text=Halo%20Admin,%20saya%20butuh%20bantuan%20di%20Self-Order`, '_blank')}
+                        className="relative p-2 bg-white/10 text-white rounded-full hover:bg-white/20 active:scale-90 transition-all"
+                        title="Bantuan"
+                    >
+                        <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg>
                     </button>
-                )}
+
+                    {customerProfile ? (
+                        <div className="relative">
+                            <button
+                                onClick={() => setShowMenu(v => !v)}
+                                className="w-9 h-9 rounded-full bg-gradient-to-tr from-isaji-orange to-orange-400 text-white font-black text-xs flex items-center justify-center shadow-sm active:scale-90 transition-transform"
+                                title={customerProfile.full_name}
+                            >
+                                {initials}
+                            </button>
+                            {showMenu && (
+                                <div className="absolute right-0 mt-2 w-44 bg-white rounded-2xl shadow-xl border border-gray-100 p-2 z-50 animate-pop-in origin-top-right">
+                                    <p className="px-3 py-2 text-xs font-black text-gray-800 truncate">{customerProfile.full_name}</p>
+                                    <button
+                                        onClick={() => { setShowMenu(false); onLogoutMember(); }}
+                                        className="w-full text-left px-3 py-2 text-xs font-bold text-red-500 hover:bg-red-50 rounded-xl transition-colors"
+                                    >
+                                        Keluar
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    ) : (
+                        <button
+                            onClick={() => window.location.href = '/customer-login'}
+                            className="text-[10px] font-black text-isaji-navy bg-white px-3 py-2 rounded-full uppercase tracking-wider shadow-sm active:scale-95 transition-transform"
+                        >
+                            Login
+                        </button>
+                    )}
+                </div>
             </div>
         </div>
     );

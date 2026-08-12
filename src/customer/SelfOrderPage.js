@@ -38,6 +38,7 @@ function SelfOrderPage() {
     const [customerPhone, setCustomerPhone] = useState('');
     const [selectedPayment, setSelectedPayment] = useState('');
     const [selectedCategory, setSelectedCategory] = useState('Semua');
+    const [searchQuery, setSearchQuery] = useState('');
 
     // MEMBER YANG SEDANG LOGIN (real Supabase Auth, bukan localStorage)
     const [customerProfile, setCustomerProfile] = useState(null);
@@ -165,7 +166,12 @@ function SelfOrderPage() {
 
     const cartItems = Object.values(cart);
     const menuCategories = ['Semua', ...Array.from(new Set(menus.map(m => m.category).filter(Boolean)))];
-    const filteredMenus = selectedCategory === 'Semua' ? menus : menus.filter(m => m.category === selectedCategory);
+    const categoryIcons = ['🍽️', '🍜', '🍛', '🥤', '🍢', '🍰', '☕', '🥗'];
+    const filteredMenus = menus
+        .filter(m => selectedCategory === 'Semua' || m.category === selectedCategory)
+        .filter(m => m.name?.toLowerCase().includes(searchQuery.trim().toLowerCase()));
+    const selectedPaymentMethod = paymentMethods.find(p => p.name === selectedPayment);
+    const requiresCashBeforeOrder = selectedPaymentMethod?.type === 'cash' && branch?.cash_payment_timing === 'before_order';
     const totalItemsCount = cartItems.reduce((sum, item) => sum + item.qty, 0);
     const subtotalAmount = cartItems.reduce((sum, item) => sum + (Number(item.price || 0) * item.qty), 0);
     const taxAmount = subtotalAmount * 0.10;
@@ -210,7 +216,8 @@ function SelfOrderPage() {
 
         try {
             const orderNumber = 'ORD-' + Math.floor(100000 + Math.random() * 900000);
-            const isCash = selectedPayment === 'cash';
+            const chosenMethod = paymentMethods.find(p => p.name === selectedPayment);
+            const isCash = chosenMethod?.type === 'cash';
 
             // [PERBAIKAN SaaS] Insert dengan relasi Org ID, Branch ID, Table ID, dan Channel 'self_order'
             const { data: newOrder, error: oErr } = await supabase.from('orders').insert([{
@@ -219,7 +226,7 @@ function SelfOrderPage() {
                 table_id: tableInfo.id,                  // Identitas Meja
                 order_number: orderNumber,
                 channel: 'self_order',                   // [UPDATE] Penanda sumber transaksi (Kasir/Laporan akan tahu ini dari scan QR)
-                status: 'pending',
+                status: 'pending', // NOTE: sengaja tidak dibuat status baru krn belum tahu constraint enum orders.status kamu — lihat catatan di bawah
                 payment_status: isCash ? 'unpaid' : 'paid',
                 customer_name: customerName,
                 customer_phone: customerPhone,
@@ -262,40 +269,82 @@ function SelfOrderPage() {
 
     return (
         <div className="min-h-screen bg-gray-50 flex flex-col max-w-md mx-auto relative shadow-2xl overflow-x-hidden font-sans">
-            <SelfOrderHeader branch={branch} activeTab={activeTab} setActiveTab={setActiveTab} customerProfile={customerProfile} onLogoutMember={handleLogoutMember} />
+            <SelfOrderHeader branch={branch} tableInfo={tableInfo} activeTab={activeTab} setActiveTab={setActiveTab} customerProfile={customerProfile} onLogoutMember={handleLogoutMember} />
 
             <div className="flex-1 pb-28 overflow-y-auto">
                 {activeTab === 'menu' && (
                     <div className="animate-fade-in">
-                        <div className="bg-gradient-to-r from-isaji-navy to-blue-900 px-5 py-6 rounded-b-[2rem] shadow-md text-white text-center">
-                            <h2 className="text-2xl font-black mb-1">Meja {tableInfo?.name}</h2>
-                            <p className="text-xs text-blue-200">Pesanan akan otomatis dikirim ke meja Anda.</p>
-                        </div>
-                        <div className="p-5">
-                            {/* Filter Kategori Menu (Makanan/Minuman/dll dari kolom menus.category) */}
+                        <div className="px-5 pt-4">
+                            {/* Search bar */}
+                            <div className="relative mb-4">
+                                <svg className="w-4 h-4 text-gray-400 absolute left-4 top-1/2 -translate-y-1/2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-4.35-4.35M17 11a6 6 0 11-12 0 6 6 0 0112 0z" /></svg>
+                                <input
+                                    type="text"
+                                    value={searchQuery}
+                                    onChange={(e) => setSearchQuery(e.target.value)}
+                                    placeholder="Cari menu favoritmu..."
+                                    className="w-full pl-11 pr-4 py-3 rounded-2xl bg-white border border-gray-100 shadow-sm text-sm outline-none transition-all focus:border-isaji-orange focus:shadow-md"
+                                />
+                            </div>
+
+                            {/* Promo banner */}
+                            <div className="bg-gradient-to-br from-isaji-navy to-blue-900 rounded-3xl px-5 py-5 shadow-md text-white relative overflow-hidden mb-5">
+                                <div className="absolute -right-6 -top-6 w-28 h-28 bg-isaji-orange/20 rounded-full"></div>
+                                <div className="absolute -right-2 bottom-0 w-16 h-16 bg-white/5 rounded-full"></div>
+                                <p className="text-[10px] font-black text-isaji-orange uppercase tracking-widest mb-1 relative">Meja {tableInfo?.name}</p>
+                                <h2 className="text-lg font-black leading-tight mb-1 relative">Pesan Langsung<br />dari Meja Anda</h2>
+                                <p className="text-[11px] text-blue-200 relative">Pesanan otomatis masuk ke dapur, tanpa antri.</p>
+                            </div>
+
+                            {/* Kategori (grid ikon, gaya "after") */}
                             {menuCategories.length > 1 && (
-                                <div className="flex gap-2 overflow-x-auto pb-3 -mx-1 px-1 mb-3">
-                                    {menuCategories.map(cat => (
-                                        <button
-                                            key={cat}
-                                            onClick={() => setSelectedCategory(cat)}
-                                            className={`shrink-0 px-4 py-2 rounded-full text-xs font-black capitalize transition-colors ${selectedCategory === cat
-                                                ? 'bg-isaji-orange text-white shadow-sm'
-                                                : 'bg-white text-gray-500 border border-gray-200'
-                                                }`}
-                                        >
-                                            {cat}
-                                        </button>
-                                    ))}
+                                <div className="mb-5">
+                                    <div className="flex items-center justify-between mb-3">
+                                        <h3 className="text-sm font-black text-gray-900">Kategori</h3>
+                                    </div>
+                                    <div className="grid grid-cols-4 gap-3">
+                                        {menuCategories.map((cat, idx) => (
+                                            <button
+                                                key={cat}
+                                                onClick={() => setSelectedCategory(cat)}
+                                                style={{ animationDelay: `${idx * 40}ms` }}
+                                                className={`flex flex-col items-center gap-1.5 py-3 rounded-2xl border text-[10px] font-black capitalize transition-all active:scale-90 animate-pop-in ${selectedCategory === cat
+                                                    ? 'bg-isaji-navy border-isaji-navy text-white shadow-md'
+                                                    : 'bg-white border-gray-100 text-gray-600 shadow-sm'
+                                                    }`}
+                                            >
+                                                <span className="text-lg">{categoryIcons[idx % categoryIcons.length]}</span>
+                                                <span className="truncate max-w-[56px]">{cat}</span>
+                                            </button>
+                                        ))}
+                                    </div>
                                 </div>
                             )}
+
+                            <div className="flex items-center justify-between mb-3">
+                                <h3 className="text-sm font-black text-gray-900">
+                                    {selectedCategory === 'Semua' ? 'Menu Populer' : selectedCategory}
+                                </h3>
+                                <span className="text-[10px] font-bold text-gray-400">{filteredMenus.length} item</span>
+                            </div>
+
+                            {filteredMenus.length === 0 && (
+                                <div className="text-center py-10 text-gray-400 text-xs font-bold animate-fade-in">
+                                    Menu tidak ditemukan.
+                                </div>
+                            )}
+
                             <div className="grid grid-cols-2 gap-4">
-                                {filteredMenus.map(menu => {
+                                {filteredMenus.map((menu, idx) => {
                                     const inCart = cart[menu.id]?.qty || 0;
                                     const isJustAdded = addedItemId === menu.id;
 
                                     return (
-                                        <div key={menu.id} className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden flex flex-col justify-between group">
+                                        <div
+                                            key={menu.id}
+                                            style={{ animationDelay: `${Math.min(idx, 10) * 45}ms` }}
+                                            className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden flex flex-col justify-between group animate-slide-up transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-md"
+                                        >
                                             <div>
                                                 <div className="h-32 bg-gray-100 relative">
                                                     {menu.image_url ? (
@@ -380,26 +429,45 @@ function SelfOrderPage() {
                             <div className="pt-2">
                                 <label className="block text-[10px] font-black text-gray-400 uppercase mb-2">Metode Pembayaran</label>
                                 <div className="space-y-2">
-                                    <label className={`flex items-center gap-3 p-4 rounded-2xl border cursor-pointer transition-colors active:scale-95 ${selectedPayment === 'cash' ? 'border-isaji-orange bg-orange-50' : 'border-gray-200'}`}>
-                                        <input type="radio" name="payment" value="cash" onChange={() => setSelectedPayment('cash')} className="w-4 h-4 accent-isaji-orange" />
-                                        <span className="text-sm font-bold text-gray-700">Bayar di Kasir (Tunai)</span>
-                                    </label>
-                                    <label className={`flex items-center gap-3 p-4 rounded-2xl border cursor-pointer transition-colors active:scale-95 ${selectedPayment === 'qris' ? 'border-isaji-orange bg-orange-50' : 'border-gray-200'}`}>
-                                        <input type="radio" name="payment" value="qris" onChange={() => setSelectedPayment('qris')} className="w-4 h-4 accent-isaji-orange" />
-                                        <span className="text-sm font-bold text-gray-700">QRIS Instan</span>
-                                    </label>
-                                    {paymentMethods.map(pm => (
-                                        <label key={pm.id} className={`flex items-center gap-3 p-4 rounded-2xl border cursor-pointer transition-colors active:scale-95 ${selectedPayment === pm.name ? 'border-isaji-orange bg-orange-50' : 'border-gray-200'}`}>
-                                            <input type="radio" name="payment" value={pm.name} onChange={() => setSelectedPayment(pm.name)} className="w-4 h-4 accent-isaji-orange" />
-                                            <span className="text-sm font-bold text-gray-700">{pm.name}</span>
-                                        </label>
-                                    ))}
+                                    {/* Metode ini datang langsung dari payment_methods milik cabang ini saja (sudah difilter branch_id di loadSessionData) */}
+                                    {paymentMethods.length === 0 && (
+                                        <p className="text-xs text-gray-400 italic px-1">Cabang ini belum mengatur metode pembayaran.</p>
+                                    )}
+                                    {paymentMethods.map(pm => {
+                                        const isCash = pm.type === 'cash';
+                                        const isSelected = selectedPayment === pm.name;
+                                        return (
+                                            <label key={pm.id} className={`block p-4 rounded-2xl border cursor-pointer transition-colors active:scale-95 ${isSelected ? 'border-isaji-orange bg-orange-50' : 'border-gray-200'}`}>
+                                                <div className="flex items-center gap-3">
+                                                    <input type="radio" name="payment" value={pm.name} onChange={() => setSelectedPayment(pm.name)} className="w-4 h-4 accent-isaji-orange shrink-0" />
+                                                    <div className="min-w-0">
+                                                        <span className="text-sm font-bold text-gray-700 block truncate">{pm.name}</span>
+                                                        {isCash && (
+                                                            <span className="text-[10px] text-gray-400 font-semibold">
+                                                                {branch?.cash_payment_timing === 'before_order' ? 'Bayar dulu sebelum pesanan diproses' : 'Bayar nanti di kasir'}
+                                                            </span>
+                                                        )}
+                                                        {!isCash && pm.provider_details && (
+                                                            <span className="text-[10px] text-gray-400 font-semibold block truncate">{pm.provider_details}</span>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                                {isSelected && pm.type === 'static_qris' && pm.qr_image_url && (
+                                                    <div className="mt-3 flex justify-center animate-pop-in">
+                                                        <img src={pm.qr_image_url} alt={`QRIS ${pm.name}`} className="w-40 h-40 object-contain rounded-xl border border-gray-100 bg-white p-2" />
+                                                    </div>
+                                                )}
+                                            </label>
+                                        );
+                                    })}
                                 </div>
                             </div>
                         </div>
 
                         <button onClick={handleConfirmOrderSubmit} className="w-full bg-isaji-navy text-white py-4 rounded-2xl font-black text-sm shadow-lg active:scale-95 transition-transform">
-                            Rp {grandTotal.toLocaleString('id-ID')} - Bayar Sekarang
+                            {selectedPayment && paymentMethods.find(p => p.name === selectedPayment)?.type === 'cash' && branch?.cash_payment_timing !== 'before_order'
+                                ? `Rp ${grandTotal.toLocaleString('id-ID')} - Pesan Sekarang, Bayar di Kasir`
+                                : `Rp ${grandTotal.toLocaleString('id-ID')} - Bayar Sekarang`}
                         </button>
                     </div>
                 )}
@@ -428,7 +496,11 @@ function SelfOrderPage() {
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-5 bg-gray-900/70 backdrop-blur-sm">
                     <div className="bg-white rounded-3xl p-6 text-center w-full max-w-sm scale-100 animate-fade-in">
                         <h3 className="font-black text-lg mb-2">Konfirmasi Pesanan</h3>
-                        <p className="text-xs text-gray-500 mb-5">Pesanan tidak dapat dibatalkan setelah masuk dapur.</p>
+                        <p className="text-xs text-gray-500 mb-5">
+                            {requiresCashBeforeOrder
+                                ? 'Silakan bayar tunai di kasir terlebih dahulu, lalu tunjukkan nomor pesanan Anda agar diproses ke dapur.'
+                                : 'Pesanan tidak dapat dibatalkan setelah masuk dapur.'}
+                        </p>
                         <button onClick={executeFinalOrder} disabled={isSubmitting} className="w-full bg-isaji-orange text-white py-3.5 rounded-xl font-black mb-2 active:scale-95 transition-transform">
                             {isSubmitting ? 'Memproses...' : 'Setuju & Proses'}
                         </button>

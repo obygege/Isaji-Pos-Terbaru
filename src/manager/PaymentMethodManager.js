@@ -2,13 +2,14 @@ import React, { useState, useEffect, useCallback } from 'react';
 import supabase from '../backend/lib/supabaseClient';
 
 function PaymentMethodManager({ branchId, organizationId }) {
-    const [activeTab, setActiveTab] = useState('methods'); // 'methods' atau 'gateway_config'
+    const [activeTab, setActiveTab] = useState('methods'); // 'methods' | 'gateway_config' | 'cash_rule'
 
     // State Metode Pembayaran
     const [methods, setMethods] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingId, setEditingId] = useState(null);
+    const [isUploadingQr, setIsUploadingQr] = useState(false);
 
     const [form, setForm] = useState({
         name: '',
@@ -17,6 +18,11 @@ function PaymentMethodManager({ branchId, organizationId }) {
         qr_image_url: '',
         is_active: true
     });
+
+    // State Aturan Pembayaran Cash (kapan cash dibayar: sebelum atau sesudah pesan)
+    // Disimpan di tabel branches milik cabang ini sendiri -> tidak mungkin kecampur cabang lain
+    const [cashTiming, setCashTiming] = useState('after_order'); // 'before_order' | 'after_order'
+    const [isSavingCashRule, setIsSavingCashRule] = useState(false);
 
     // State Konfigurasi Payment Gateway (API Keys)
     const [gatewayForm, setGatewayForm] = useState({
@@ -52,6 +58,17 @@ function PaymentMethodManager({ branchId, organizationId }) {
 
             if (gwData && gwData.length > 0) {
                 setGatewayForm(gwData[0]);
+            }
+
+            // 3. Ambil aturan timing cash milik cabang INI SAJA (eq id = branchId, bukan filter lain)
+            const { data: branchRow } = await supabase
+                .from('branches')
+                .select('cash_payment_timing')
+                .eq('id', branchId)
+                .single();
+
+            if (branchRow?.cash_payment_timing) {
+                setCashTiming(branchRow.cash_payment_timing);
             }
         } catch (err) {
             console.error("Gagal memuat data pembayaran:", err.message);
@@ -137,6 +154,51 @@ function PaymentMethodManager({ branchId, organizationId }) {
         }
     };
 
+    // Upload file QRIS asli (bukan sekadar link) ke Supabase Storage, dipisah per-cabang di dalam path
+    const handleUploadQrFile = async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        if (!file.type.startsWith('image/')) return alert("File harus berupa gambar (PNG/JPG).");
+        if (file.size > 3 * 1024 * 1024) return alert("Ukuran gambar maksimal 3MB.");
+
+        setIsUploadingQr(true);
+        try {
+            const ext = file.name.split('.').pop();
+            // Path disekat per branchId supaya QRIS satu cabang tidak pernah bisa menimpa/bercampur cabang lain
+            const filePath = `${branchId}/qris-${Date.now()}.${ext}`;
+
+            const { error: upErr } = await supabase.storage
+                .from('payment-qris')
+                .upload(filePath, file, { cacheControl: '3600', upsert: false });
+            if (upErr) throw upErr;
+
+            const { data: pub } = supabase.storage.from('payment-qris').getPublicUrl(filePath);
+            setForm(prev => ({ ...prev, qr_image_url: pub.publicUrl }));
+        } catch (err) {
+            alert("Gagal upload QRIS: " + err.message + "\n\nPastikan bucket 'payment-qris' sudah dibuat (public) di Supabase Storage.");
+        } finally {
+            setIsUploadingQr(false);
+        }
+    };
+
+    // Simpan aturan kapan cash dibayar. Update dilakukan dengan eq('id', branchId) SAJA
+    // -> tidak pernah menyentuh baris cabang lain.
+    const handleSaveCashRule = async () => {
+        setIsSavingCashRule(true);
+        try {
+            const { error } = await supabase
+                .from('branches')
+                .update({ cash_payment_timing: cashTiming })
+                .eq('id', branchId);
+            if (error) throw error;
+            alert("Aturan pembayaran cash cabang ini berhasil disimpan!");
+        } catch (err) {
+            alert("Gagal menyimpan aturan cash: " + err.message);
+        } finally {
+            setIsSavingCashRule(false);
+        }
+    };
+
     const handleDeleteMethod = async (id, name) => {
         if (window.confirm(`Hapus metode "${name}"?`)) {
             await supabase.from('payment_methods').delete().eq('id', id);
@@ -165,10 +227,48 @@ function PaymentMethodManager({ branchId, organizationId }) {
                     >
                         Pengaturan API Gateway
                     </button>
+                    <button
+                        onClick={() => setActiveTab('cash_rule')}
+                        className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${activeTab === 'cash_rule' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}
+                    >
+                        Aturan Bayar Cash
+                    </button>
                 </div>
             </div>
 
-            {activeTab === 'methods' ? (
+            {activeTab === 'cash_rule' && (
+                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-8 max-w-2xl space-y-5">
+                    <div>
+                        <h4 className="text-lg font-black text-gray-900">Kapan Pelanggan Bayar Tunai?</h4>
+                        <p className="text-xs text-gray-500 mt-1">
+                            Berlaku khusus untuk metode <b>Cash / Tunai</b> di cabang ini saja. Metode non-tunai (QRIS, transfer, e-wallet) selalu dibayar di depan seperti biasa.
+                        </p>
+                    </div>
+                    <div className="space-y-3">
+                        <label className={`flex items-start gap-3 p-4 rounded-2xl border cursor-pointer transition-colors ${cashTiming === 'before_order' ? 'border-isaji-navy bg-blue-50' : 'border-gray-200'}`}>
+                            <input type="radio" name="cash_timing" className="mt-1 w-4 h-4 accent-isaji-navy" checked={cashTiming === 'before_order'} onChange={() => setCashTiming('before_order')} />
+                            <span>
+                                <span className="block text-sm font-bold text-gray-800">Bayar Sebelum Pesan</span>
+                                <span className="block text-xs text-gray-500 mt-0.5">Pesanan self-order baru masuk ke dapur setelah kasir konfirmasi tunai diterima.</span>
+                            </span>
+                        </label>
+                        <label className={`flex items-start gap-3 p-4 rounded-2xl border cursor-pointer transition-colors ${cashTiming === 'after_order' ? 'border-isaji-navy bg-blue-50' : 'border-gray-200'}`}>
+                            <input type="radio" name="cash_timing" className="mt-1 w-4 h-4 accent-isaji-navy" checked={cashTiming === 'after_order'} onChange={() => setCashTiming('after_order')} />
+                            <span>
+                                <span className="block text-sm font-bold text-gray-800">Bayar Sesudah Pesan (Bayar di Kasir)</span>
+                                <span className="block text-xs text-gray-500 mt-0.5">Pesanan langsung masuk ke dapur, pelanggan bayar tunai belakangan di kasir.</span>
+                            </span>
+                        </label>
+                    </div>
+                    <div className="pt-4 border-t border-gray-100 flex justify-end">
+                        <button onClick={handleSaveCashRule} disabled={isSavingCashRule} className="bg-isaji-navy hover:bg-blue-900 text-white px-6 py-2.5 rounded-xl font-bold text-sm shadow-sm">
+                            {isSavingCashRule ? 'Menyimpan...' : 'Simpan Aturan'}
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {activeTab === 'methods' && (
                 <div className="space-y-6">
                     <div className="flex justify-end">
                         <button
@@ -227,7 +327,9 @@ function PaymentMethodManager({ branchId, organizationId }) {
                         </div>
                     )}
                 </div>
-            ) : (
+            )}
+
+            {activeTab === 'gateway_config' && (
                 /* TAB KUNCI API PAYMENT GATEWAY (DIBUAT RAMAH KLIEN VIA WEB) */
                 <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-8 max-w-2xl space-y-6">
                     <div>
@@ -347,8 +449,21 @@ function PaymentMethodManager({ branchId, organizationId }) {
                             </div>
                             {form.type === 'static_qris' && (
                                 <div>
-                                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">URL Gambar QR Code</label>
-                                    <input type="url" value={form.qr_image_url} onChange={(e) => setForm({ ...form, qr_image_url: e.target.value })} placeholder="https://..." className="w-full px-4 py-2.5 rounded-xl border border-gray-200 text-sm" />
+                                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Upload Gambar QRIS</label>
+                                    {form.qr_image_url && (
+                                        <div className="h-32 w-32 bg-gray-50 rounded-xl overflow-hidden border border-gray-100 mb-2">
+                                            <img src={form.qr_image_url} alt="Preview QRIS" className="w-full h-full object-contain p-1" />
+                                        </div>
+                                    )}
+                                    <input
+                                        type="file"
+                                        accept="image/*"
+                                        onChange={handleUploadQrFile}
+                                        disabled={isUploadingQr}
+                                        className="w-full text-xs text-gray-600 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-isaji-navy file:text-white hover:file:bg-blue-900 file:cursor-pointer"
+                                    />
+                                    {isUploadingQr && <p className="text-[11px] text-isaji-navy font-bold mt-1">Mengunggah ke server...</p>}
+                                    <p className="text-[10px] text-gray-400 mt-1">Foto QRIS asli milik cabang ini, PNG/JPG maks 3MB.</p>
                                 </div>
                             )}
                             <div>
