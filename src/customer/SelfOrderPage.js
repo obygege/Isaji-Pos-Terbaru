@@ -50,6 +50,16 @@ function SelfOrderPage() {
     // STATE UNTUK ANIMASI TOMBOL TAMBAH
     const [addedItemId, setAddedItemId] = useState(null);
 
+    // ===== STATE VERIFIKASI PEMBAYARAN (QRIS / Transfer Bank manual) =====
+    // activeOrder: order yang masih berjalan di sesi ini (baik baru dibuat
+    // maupun ditemukan lagi lewat localStorage saat halaman di-refresh)
+    const [activeOrder, setActiveOrder] = useState(null);
+    const [activeVerification, setActiveVerification] = useState(null); // baris payment_verifications terbaru utk order ini
+    const [proofFile, setProofFile] = useState(null);
+    const [proofPreview, setProofPreview] = useState(null);
+    const [isUploadingProof, setIsUploadingProof] = useState(false);
+    const [proofError, setProofError] = useState(null);
+
     // 1. MEMINTA IZIN LOKASI SAAT HALAMAN DIBUKA
     useEffect(() => {
         if (window.isSecureContext === false && window.location.hostname !== 'localhost') {
@@ -210,6 +220,11 @@ function SelfOrderPage() {
         setShowTnCPopup(true);
     };
 
+    // Metode yang WAJIB verifikasi kasir (upload bukti manual): QRIS statis & Transfer Bank.
+    // 'cash' tidak butuh bukti (bayar langsung di kasir). 'ewallet' diperlakukan sama seperti
+    // QRIS/transfer (butuh bukti) selama belum terhubung payment gateway asli.
+    const requiresProofUpload = (methodType) => methodType === 'static_qris' || methodType === 'bank_transfer' || methodType === 'ewallet';
+
     const executeFinalOrder = async () => {
         setShowTnCPopup(false);
         setIsSubmitting(true);
@@ -218,6 +233,7 @@ function SelfOrderPage() {
             const orderNumber = 'ORD-' + Math.floor(100000 + Math.random() * 900000);
             const chosenMethod = paymentMethods.find(p => p.name === selectedPayment);
             const isCash = chosenMethod?.type === 'cash';
+            const needsProof = requiresProofUpload(chosenMethod?.type);
 
             // [PERBAIKAN SaaS] Insert dengan relasi Org ID, Branch ID, Table ID, dan Channel 'self_order'
             const { data: newOrder, error: oErr } = await supabase.from('orders').insert([{
@@ -225,9 +241,11 @@ function SelfOrderPage() {
                 branch_id: branchId,                     // Identitas Cabang
                 table_id: tableInfo.id,                  // Identitas Meja
                 order_number: orderNumber,
-                channel: 'self_order',                   // [UPDATE] Penanda sumber transaksi (Kasir/Laporan akan tahu ini dari scan QR)
-                status: 'pending', // NOTE: sengaja tidak dibuat status baru krn belum tahu constraint enum orders.status kamu — lihat catatan di bawah
-                payment_status: isCash ? 'unpaid' : 'paid',
+                channel: 'self_order',                   // Penanda sumber transaksi (Kasir/Laporan akan tahu ini dari scan QR)
+                // QRIS/Transfer manual -> order BELUM boleh masuk dapur sampai kasir menerima bukti bayar.
+                // Cash -> tetap alur lama (langsung 'pending', dibayar di kasir).
+                status: needsProof ? 'awaiting_payment' : 'pending',
+                payment_status: needsProof ? 'pending_verification' : (isCash ? 'unpaid' : 'paid'),
                 customer_name: customerName,
                 customer_phone: customerPhone,
                 subtotal: subtotalAmount,
@@ -248,21 +266,147 @@ function SelfOrderPage() {
             const { error: iErr } = await supabase.from('order_items').insert(orderItemsPayload);
             if (iErr) throw new Error("Order Items Error: " + iErr.message);
 
-            setOrderResult({
+            const resultPayload = {
                 orderId: newOrder.id,
                 orderNumber: orderNumber,
                 status: newOrder.status,
                 payment_status: newOrder.payment_status,
-                isCash: isCash
-            });
-            setActiveTab('success');
+                isCash: isCash,
+                methodId: chosenMethod?.id || null,
+                methodType: chosenMethod?.type || null,
+                amount: grandTotal
+            };
+            setOrderResult(resultPayload);
             setCart({});
+
+            if (needsProof) {
+                // Simpan ke localStorage supaya kalau customer refresh HP-nya,
+                // proses upload/menunggu verifikasi tidak hilang.
+                setActiveOrder(newOrder);
+                localStorage.setItem(`isaji_active_order_${tableInfo.id}`, JSON.stringify(resultPayload));
+                setActiveTab('payment_proof');
+            } else {
+                setActiveTab('success');
+            }
         } catch (err) {
             alert("Gagal memproses pesanan: " + err.message);
         } finally {
             setIsSubmitting(false);
         }
     };
+
+    // ===== UPLOAD BUKTI BAYAR (QRIS / Transfer Bank manual) =====
+    const handleProofFileChange = (e) => {
+        const file = e.target.files?.[0];
+        setProofError(null);
+        if (!file) return;
+        if (!file.type.startsWith('image/')) { setProofError("File harus berupa gambar (screenshot/foto bukti transfer)."); return; }
+        if (file.size > 5 * 1024 * 1024) { setProofError("Ukuran gambar maksimal 5MB."); return; }
+        setProofFile(file);
+        setProofPreview(URL.createObjectURL(file));
+    };
+
+    const submitPaymentProof = async () => {
+        if (!orderResult) return;
+        if (!proofFile) { setProofError("Silakan pilih/foto bukti pembayaran terlebih dahulu."); return; }
+
+        setIsUploadingProof(true);
+        setProofError(null);
+        try {
+            const ext = proofFile.name.split('.').pop() || 'jpg';
+            const filePath = `${branchId}/${orderResult.orderId}/${Date.now()}.${ext}`;
+
+            const { error: upErr } = await supabase.storage
+                .from('payment-proofs')
+                .upload(filePath, proofFile, { cacheControl: '3600', upsert: false });
+            if (upErr) throw upErr;
+
+            const { data: pub } = supabase.storage.from('payment-proofs').getPublicUrl(filePath);
+
+            const { data: { session } } = await supabase.auth.getSession();
+
+            const { data: verifRow, error: vErr } = await supabase.from('payment_verifications').insert([{
+                order_id: orderResult.orderId,
+                branch_id: branchId,
+                payment_method_id: orderResult.methodId,
+                method_type: orderResult.methodType,
+                amount: orderResult.amount,
+                proof_url: pub.publicUrl,
+                status: 'pending',
+                submitted_by: session?.user?.id || null
+            }]).select().single();
+            if (vErr) throw vErr;
+
+            // Pastikan status order kembali "menunggu verifikasi" (relevan saat ini adalah upload ULANG setelah ditolak)
+            await supabase.from('orders').update({
+                payment_status: 'pending_verification',
+                active_payment_verification_id: verifRow.id
+            }).eq('id', orderResult.orderId);
+
+            setActiveVerification(verifRow);
+            setProofFile(null);
+            setProofPreview(null);
+            setActiveTab('payment_status');
+        } catch (err) {
+            setProofError("Gagal mengunggah bukti: " + err.message);
+        } finally {
+            setIsUploadingProof(false);
+        }
+    };
+
+    // ===== POLLING STATUS VERIFIKASI (tiap 5 detik selagi ada order aktif menunggu) =====
+    useEffect(() => {
+        if (!orderResult?.orderId) return;
+        if (activeTab !== 'payment_proof' && activeTab !== 'payment_status') return;
+
+        let cancelled = false;
+
+        const checkStatus = async () => {
+            const { data: latestVerif } = await supabase
+                .from('payment_verifications')
+                .select('*')
+                .eq('order_id', orderResult.orderId)
+                .order('created_at', { ascending: false })
+                .limit(1)
+                .maybeSingle();
+
+            const { data: latestOrder } = await supabase
+                .from('orders')
+                .select('status, payment_status')
+                .eq('id', orderResult.orderId)
+                .single();
+
+            if (cancelled) return;
+
+            if (latestVerif) setActiveVerification(latestVerif);
+
+            if (latestOrder?.payment_status === 'paid') {
+                localStorage.removeItem(`isaji_active_order_${tableInfo?.id}`);
+                setOrderResult(prev => ({ ...prev, status: latestOrder.status, payment_status: latestOrder.payment_status }));
+                setActiveTab('success');
+            } else if (latestVerif?.status === 'rejected' && latestOrder?.payment_status === 'rejected') {
+                setActiveTab('payment_status');
+            }
+        };
+
+        checkStatus();
+        const interval = setInterval(checkStatus, 5000);
+        return () => { cancelled = true; clearInterval(interval); };
+    }, [orderResult?.orderId, activeTab, tableInfo?.id]);
+
+    // ===== RESUME ORDER YANG MASIH MENUNGGU VERIFIKASI SETELAH REFRESH =====
+    useEffect(() => {
+        if (!tableInfo?.id) return;
+        const saved = localStorage.getItem(`isaji_active_order_${tableInfo.id}`);
+        if (!saved) return;
+        try {
+            const parsed = JSON.parse(saved);
+            if (parsed?.orderId) {
+                setOrderResult(parsed);
+                setActiveTab('payment_status');
+            }
+        } catch (e) { /* localStorage rusak, abaikan */ }
+    }, [tableInfo?.id]);
 
     if (isLoading) return <div className="min-h-screen flex items-center justify-center bg-gray-50"><div className="animate-spin w-8 h-8 border-4 border-isaji-orange border-t-transparent rounded-full"></div></div>;
     if (errorMsg) return <div className="min-h-screen flex flex-col items-center justify-center bg-red-50 p-6 text-center"><h2 className="text-lg font-black text-red-600 mb-1">Akses Ditolak</h2><p className="text-sm text-gray-700">{errorMsg}</p></div>;
@@ -469,6 +613,76 @@ function SelfOrderPage() {
                                 ? `Rp ${grandTotal.toLocaleString('id-ID')} - Pesan Sekarang, Bayar di Kasir`
                                 : `Rp ${grandTotal.toLocaleString('id-ID')} - Bayar Sekarang`}
                         </button>
+                    </div>
+                )}
+
+                {activeTab === 'payment_proof' && orderResult && (
+                    <div className="p-5 space-y-5 animate-fade-in">
+                        <div className="text-center">
+                            <h2 className="text-base font-black text-gray-900">Upload Bukti Pembayaran</h2>
+                            <p className="text-xs text-gray-500 mt-1">Pesanan <span className="font-bold">{orderResult.orderNumber}</span> akan diproses ke dapur setelah kasir memverifikasi bukti bayar Anda.</p>
+                        </div>
+
+                        {selectedPaymentMethod?.type === 'static_qris' && selectedPaymentMethod?.qr_image_url && (
+                            <div className="bg-white p-5 rounded-3xl border border-gray-100 shadow-sm flex flex-col items-center">
+                                <img src={selectedPaymentMethod.qr_image_url} alt="QRIS" className="w-44 h-44 object-contain rounded-xl border border-gray-100 bg-white p-2" />
+                                <p className="text-[11px] text-gray-400 font-semibold mt-2">Scan QRIS di atas, lalu unggah screenshot bukti pembayaran.</p>
+                            </div>
+                        )}
+                        {selectedPaymentMethod?.type === 'bank_transfer' && selectedPaymentMethod?.provider_details && (
+                            <div className="bg-white p-5 rounded-3xl border border-gray-100 shadow-sm">
+                                <p className="text-[10px] font-black text-gray-400 uppercase mb-1">Transfer ke</p>
+                                <p className="text-sm font-bold text-gray-800 whitespace-pre-line">{selectedPaymentMethod.provider_details}</p>
+                            </div>
+                        )}
+
+                        <div className="bg-white p-5 rounded-3xl border border-gray-100 shadow-sm space-y-2.5">
+                            <div className="flex justify-between text-gray-900 font-black text-base">
+                                <span>Total Tagihan</span>
+                                <span className="text-isaji-orange">Rp {Number(orderResult.amount || grandTotal).toLocaleString('id-ID')}</span>
+                            </div>
+                        </div>
+
+                        <div className="bg-white p-5 rounded-3xl border border-gray-100 shadow-sm space-y-3">
+                            <label className="block text-[10px] font-black text-gray-400 uppercase">Bukti Pembayaran</label>
+                            {proofPreview ? (
+                                <img src={proofPreview} alt="Preview bukti bayar" className="w-full h-48 object-contain rounded-xl border border-gray-100 bg-gray-50" />
+                            ) : (
+                                <div className="w-full h-32 rounded-xl border-2 border-dashed border-gray-200 flex items-center justify-center text-gray-300 text-xs font-bold">Belum ada gambar dipilih</div>
+                            )}
+                            <input type="file" accept="image/*" capture="environment" onChange={handleProofFileChange} className="w-full text-xs" />
+                            {proofError && <p className="text-xs text-red-500 font-bold">{proofError}</p>}
+                        </div>
+
+                        <button onClick={submitPaymentProof} disabled={isUploadingProof} className="w-full bg-isaji-navy text-white py-4 rounded-2xl font-black text-sm shadow-lg active:scale-95 transition-transform disabled:opacity-60">
+                            {isUploadingProof ? 'Mengunggah...' : 'Kirim Bukti Pembayaran'}
+                        </button>
+                    </div>
+                )}
+
+                {activeTab === 'payment_status' && orderResult && (
+                    <div className="p-6 text-center space-y-6 animate-fade-in">
+                        {activeVerification?.status === 'rejected' ? (
+                            <>
+                                <div className="w-20 h-20 bg-red-50 text-red-500 rounded-full flex items-center justify-center mx-auto text-3xl font-black shadow-inner">✕</div>
+                                <div>
+                                    <h2 className="text-xl font-black text-gray-900">Bukti Pembayaran Ditolak</h2>
+                                    <p className="text-sm text-gray-600 mt-2">Alasan dari kasir:</p>
+                                    <p className="text-sm font-bold text-red-600 bg-red-50 rounded-xl p-3 mt-1">{activeVerification.rejection_reason || 'Bukti tidak sesuai / tidak terbaca.'}</p>
+                                </div>
+                                <button onClick={() => { setProofFile(null); setProofPreview(null); setActiveTab('payment_proof'); }} className="w-full bg-isaji-orange text-white py-3.5 rounded-2xl font-black active:scale-95 transition-transform">Upload Ulang Bukti Bayar</button>
+                            </>
+                        ) : (
+                            <>
+                                <div className="w-20 h-20 bg-amber-50 text-amber-500 rounded-full flex items-center justify-center mx-auto animate-pulse">
+                                    <div className="animate-spin w-8 h-8 border-4 border-amber-400 border-t-transparent rounded-full"></div>
+                                </div>
+                                <div>
+                                    <h2 className="text-xl font-black text-gray-900">Menunggu Verifikasi Kasir</h2>
+                                    <p className="text-sm text-gray-600 mt-2">Pesanan <span className="font-bold">{orderResult.orderNumber}</span> Anda sedang dicek oleh kasir. Halaman ini akan otomatis update begitu bukti Anda diverifikasi.</p>
+                                </div>
+                            </>
+                        )}
                     </div>
                 )}
 

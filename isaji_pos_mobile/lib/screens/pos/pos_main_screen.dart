@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:responsive_builder/responsive_builder.dart';
 
+// Import semua tab
 import 'tabs/dashboard_tab.dart';
 import 'tabs/cashier_tab.dart';
+import 'tabs/validation_tab.dart'; // TAB BARU!
 import 'tabs/active_orders_tab.dart';
 import 'tabs/history_tab.dart';
 
+// Import pengaturan & shift
 import '../settings/printer_settings_screen.dart';
 import '../shift/close_shift_screen.dart';
 
@@ -19,9 +22,11 @@ class PosMainScreen extends StatefulWidget {
 class _PosMainScreenState extends State<PosMainScreen> {
   int _selectedIndex = 0;
 
+  // Urutan Tab ditambahkan ValidationTab di Index 2
   final List<Widget> _tabs = const [
     DashboardTab(),
     CashierTab(),
+    ValidationTab(), // <-- INDEX 2
     ActiveOrdersTab(),
     HistoryTab(),
   ];
@@ -59,7 +64,6 @@ class _PosMainScreenState extends State<PosMainScreen> {
         if (isMobile) {
           return Scaffold(
             appBar: AppBar(
-              // Menampilkan Logo Isaji di Mobile
               title: Image.asset(
                 'assets/images/LOGO.png',
                 height: 36,
@@ -98,14 +102,17 @@ class _PosMainScreenState extends State<PosMainScreen> {
               child: BottomNavigationBar(
                 currentIndex: _selectedIndex,
                 onTap: _onItemTapped,
-                type: BottomNavigationBarType.fixed,
+                type: BottomNavigationBarType
+                    .fixed, // Penting agar icon > 3 tidak berantakan
                 backgroundColor: Colors.white,
                 selectedItemColor: const Color(0xFF00B4D8),
                 unselectedItemColor: Colors.grey.shade400,
                 showUnselectedLabels: true,
                 selectedLabelStyle: const TextStyle(
                   fontWeight: FontWeight.bold,
+                  fontSize: 11,
                 ),
+                unselectedLabelStyle: const TextStyle(fontSize: 10),
                 items: const [
                   BottomNavigationBarItem(
                     icon: Icon(Icons.dashboard_rounded),
@@ -115,6 +122,10 @@ class _PosMainScreenState extends State<PosMainScreen> {
                     icon: Icon(Icons.point_of_sale),
                     label: 'Kasir',
                   ),
+                  BottomNavigationBarItem(
+                    icon: Icon(Icons.price_check),
+                    label: 'Validasi',
+                  ), // <-- MENU BARU
                   BottomNavigationBarItem(
                     icon: Icon(Icons.list_alt),
                     label: 'Pesanan',
@@ -150,7 +161,6 @@ class _PosMainScreenState extends State<PosMainScreen> {
                 child: Column(
                   children: [
                     const SizedBox(height: 32),
-                    // LOGO ISAJI DI SIDEBAR TABLET
                     Container(
                       margin: const EdgeInsets.symmetric(horizontal: 16),
                       padding: const EdgeInsets.all(8),
@@ -173,12 +183,21 @@ class _PosMainScreenState extends State<PosMainScreen> {
                     ),
                     const SizedBox(height: 40),
 
-                    _buildNavItem(Icons.dashboard_rounded, 'Beranda', 0),
-                    _buildNavItem(Icons.point_of_sale, 'Kasir', 1),
-                    _buildNavItem(Icons.list_alt, 'Pesanan', 2),
-                    _buildNavItem(Icons.history, 'Riwayat', 3),
-
-                    const Spacer(),
+                    Expanded(
+                      child: ListView(
+                        children: [
+                          _buildNavItem(Icons.dashboard_rounded, 'Beranda', 0),
+                          _buildNavItem(Icons.point_of_sale, 'Kasir', 1),
+                          _buildNavItem(
+                            Icons.price_check,
+                            'Validasi',
+                            2,
+                          ), // <-- MENU BARU
+                          _buildNavItem(Icons.list_alt, 'Pesanan', 3),
+                          _buildNavItem(Icons.history, 'Riwayat', 4),
+                        ],
+                      ),
+                    ),
 
                     // FOOTER: Tombol Pengaturan
                     InkWell(
