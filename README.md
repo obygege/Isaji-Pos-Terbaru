@@ -67,3 +67,7 @@ Melanjutkan pengembangan modul berikutnya (Manajemen Tim/Karyawan atau Laporan K
 
 Implementasi penyimpanan berkas (Supabase Storage Bucket) untuk fitur unggah logo fisik secara langsung."# Isaji-Pos-Terbaru"  
 "# Isaji-Pos-Terbaru"  
+
+
+Login Super Admin Akses : 
+/isaji-command-center

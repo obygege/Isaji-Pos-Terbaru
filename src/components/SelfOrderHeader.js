@@ -4,13 +4,26 @@ function SelfOrderHeader({ branch, tableInfo, activeTab, setActiveTab, customerP
     const [showMenu, setShowMenu] = useState(false);
     const initials = (customerProfile?.full_name || 'M').trim().charAt(0).toUpperCase();
 
+    // Peta "kembali" untuk setiap tahap checkout supaya tombol back di header konsisten
+    // dengan alur baru: keranjang -> data pemesan -> pilih pembayaran -> (bukti/tunggu).
+    const backTargetMap = {
+        cart: 'menu',
+        order_form: 'cart',
+        payment: 'order_form',
+        payment_proof: 'payment',
+        cash_wait: 'payment',
+        gateway_wait: 'payment',
+        payment_status: 'menu'
+    };
+    const handleBack = () => setActiveTab(backTargetMap[activeTab] || 'menu');
+
     return (
         <div className="bg-isaji-navy px-5 pt-4 pb-5 rounded-b-[1.75rem] shadow-lg z-40 sticky top-0 animate-fade-in">
             <div className="flex justify-between items-start">
                 <div className="flex items-center gap-2.5 min-w-0">
                     {activeTab !== 'menu' && activeTab !== 'success' ? (
                         <button
-                            onClick={() => setActiveTab(activeTab === 'checkout' ? 'cart' : 'menu')}
+                            onClick={handleBack}
                             className="p-2 bg-white/10 text-white rounded-full hover:bg-white/20 active:scale-90 transition-all shrink-0"
                         >
                             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15 19l-7-7 7-7"></path></svg>

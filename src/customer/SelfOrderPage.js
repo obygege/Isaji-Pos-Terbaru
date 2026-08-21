@@ -24,6 +24,7 @@ function SelfOrderPage() {
     const [tableInfo, setTableInfo] = useState(null);
     const [menus, setMenus] = useState([]);
     const [paymentMethods, setPaymentMethods] = useState([]);
+    const [gatewayConfig, setGatewayConfig] = useState(null); // payment_gateways_config aktif milik cabang (mis. Midtrans)
 
     const [isLoading, setIsLoading] = useState(true);
     const [errorMsg, setErrorMsg] = useState(null);
@@ -36,8 +37,11 @@ function SelfOrderPage() {
 
     const [customerName, setCustomerName] = useState('');
     const [customerPhone, setCustomerPhone] = useState('');
+    // selectedPayment: 'pm-<id_payment_methods>' untuk metode manual, atau 'gw-midtrans' untuk gateway otomatis
     const [selectedPayment, setSelectedPayment] = useState('');
     const [selectedCategory, setSelectedCategory] = useState('Semua');
+    const [isGatewayProcessing, setIsGatewayProcessing] = useState(false);
+    const [gatewayError, setGatewayError] = useState(null);
     const [searchQuery, setSearchQuery] = useState('');
 
     // MEMBER YANG SEDANG LOGIN (real Supabase Auth, bukan localStorage)
@@ -110,6 +114,16 @@ function SelfOrderPage() {
             const { data: payData } = await supabase.from('payment_methods').select('*').eq('branch_id', branchId).eq('is_active', true);
             setPaymentMethods(payData || []);
 
+            // Payment Gateway otomatis (mis. Midtrans) - hanya dipakai kalau manager sudah mengaktifkannya
+            // client_key aman ditampilkan ke browser, server_key TIDAK pernah diambil di sini.
+            const { data: gwData } = await supabase
+                .from('payment_gateways_config')
+                .select('id, provider_name, is_active, environment, client_key')
+                .eq('branch_id', branchId)
+                .eq('is_active', true)
+                .maybeSingle();
+            setGatewayConfig(gwData || null);
+
         } catch (err) {
             setErrorMsg(err.message);
         } finally {
@@ -180,14 +194,26 @@ function SelfOrderPage() {
     const filteredMenus = menus
         .filter(m => selectedCategory === 'Semua' || m.category === selectedCategory)
         .filter(m => m.name?.toLowerCase().includes(searchQuery.trim().toLowerCase()));
-    const selectedPaymentMethod = paymentMethods.find(p => p.name === selectedPayment);
-    const requiresCashBeforeOrder = selectedPaymentMethod?.type === 'cash' && branch?.cash_payment_timing === 'before_order';
+    // Gabungan semua opsi pembayaran yang tersedia untuk cabang ini: metode manual (cash/qris/transfer/ewallet)
+    // dan gateway otomatis (Midtrans) kalau manager sudah mengaktifkannya di Payment Method Manager.
+    const paymentOptions = [
+        ...paymentMethods.map(pm => ({ key: `pm-${pm.id}`, kind: 'manual', pm })),
+        ...(gatewayConfig ? [{ key: `gw-${gatewayConfig.provider_name}`, kind: 'gateway', gw: gatewayConfig }] : [])
+    ];
+    const selectedOption = paymentOptions.find(o => o.key === selectedPayment);
+    const selectedPaymentMethod = selectedOption?.kind === 'manual' ? selectedOption.pm : null;
+    const isSelectedCash = selectedOption?.kind === 'manual' && selectedOption.pm.type === 'cash';
+    const isSelectedGateway = selectedOption?.kind === 'gateway';
+    // Metode yang WAJIB verifikasi kasir dengan upload bukti manual: QRIS statis & Transfer Bank.
+    // 'ewallet' diperlakukan sama (butuh bukti) selama belum dihubungkan ke payment gateway asli.
+    const isSelectedManualProof = selectedOption?.kind === 'manual' && ['static_qris', 'bank_transfer', 'ewallet'].includes(selectedOption.pm.type);
+    const requiresCashBeforeOrder = isSelectedCash && branch?.cash_payment_timing === 'before_order';
     const totalItemsCount = cartItems.reduce((sum, item) => sum + item.qty, 0);
     const subtotalAmount = cartItems.reduce((sum, item) => sum + (Number(item.price || 0) * item.qty), 0);
     const taxAmount = subtotalAmount * 0.10;
     const grandTotal = subtotalAmount + taxAmount;
 
-    // 4. CEK LOKASI SEBELUM CHECKOUT
+    // 4. CEK LOKASI, LALU LANJUT KE FORM DATA PEMESAN (bukan langsung ke pilihan pembayaran)
     const checkLocationAndProceed = () => {
         if (cartItems.length === 0) return alert("Keranjang kosong!");
 
@@ -210,30 +236,39 @@ function SelfOrderPage() {
             }
         }
 
-        setActiveTab('checkout');
+        setActiveTab('order_form');
+    };
+
+    // 4b. LANJUT DARI FORM DATA PEMESAN -> HALAMAN PILIH METODE PEMBAYARAN
+    const handleContinueToPayment = () => {
+        if (customerName.trim().length < 3) return alert("Nama pemesan terlalu pendek.");
+        if (customerPhone.length < 11) return alert("Nomor WhatsApp minimal 11 digit.");
+        setActiveTab('payment');
     };
 
     const handleConfirmOrderSubmit = () => {
-        if (customerName.trim().length < 3) return alert("Nama pemesan terlalu pendek.");
-        if (customerPhone.length < 11) return alert("Nomor WhatsApp minimal 11 digit.");
         if (!selectedPayment) return alert("Pilih metode pembayaran terlebih dahulu.");
         setShowTnCPopup(true);
     };
 
-    // Metode yang WAJIB verifikasi kasir (upload bukti manual): QRIS statis & Transfer Bank.
-    // 'cash' tidak butuh bukti (bayar langsung di kasir). 'ewallet' diperlakukan sama seperti
-    // QRIS/transfer (butuh bukti) selama belum terhubung payment gateway asli.
-    const requiresProofUpload = (methodType) => methodType === 'static_qris' || methodType === 'bank_transfer' || methodType === 'ewallet';
-
     const executeFinalOrder = async () => {
         setShowTnCPopup(false);
         setIsSubmitting(true);
+        setGatewayError(null);
 
         try {
             const orderNumber = 'ORD-' + Math.floor(100000 + Math.random() * 900000);
-            const chosenMethod = paymentMethods.find(p => p.name === selectedPayment);
-            const isCash = chosenMethod?.type === 'cash';
-            const needsProof = requiresProofUpload(chosenMethod?.type);
+            const needsProof = isSelectedManualProof;
+            const isCash = isSelectedCash;
+            const isGateway = isSelectedGateway;
+
+            // Aturan status awal:
+            // - QRIS/Transfer/E-wallet manual -> menunggu kasir verifikasi bukti bayar, belum masuk dapur.
+            // - Cash -> pelanggan bayar dulu di kasir, order BARU diproses ke dapur setelah kasir
+            //   menandai pembayaran diterima (jadi statusnya sama-sama "menunggu verifikasi").
+            // - Gateway (Midtrans dkk) -> menunggu pembayaran online selesai (webhook yang mengubah status).
+            const initialStatus = (needsProof || isCash || isGateway) ? 'awaiting_payment' : 'pending';
+            const initialPaymentStatus = (needsProof || isCash || isGateway) ? 'pending_verification' : 'paid';
 
             // [PERBAIKAN SaaS] Insert dengan relasi Org ID, Branch ID, Table ID, dan Channel 'self_order'
             const { data: newOrder, error: oErr } = await supabase.from('orders').insert([{
@@ -242,10 +277,8 @@ function SelfOrderPage() {
                 table_id: tableInfo.id,                  // Identitas Meja
                 order_number: orderNumber,
                 channel: 'self_order',                   // Penanda sumber transaksi (Kasir/Laporan akan tahu ini dari scan QR)
-                // QRIS/Transfer manual -> order BELUM boleh masuk dapur sampai kasir menerima bukti bayar.
-                // Cash -> tetap alur lama (langsung 'pending', dibayar di kasir).
-                status: needsProof ? 'awaiting_payment' : 'pending',
-                payment_status: needsProof ? 'pending_verification' : (isCash ? 'unpaid' : 'paid'),
+                status: initialStatus,
+                payment_status: initialPaymentStatus,
                 customer_name: customerName,
                 customer_phone: customerPhone,
                 subtotal: subtotalAmount,
@@ -272,19 +305,25 @@ function SelfOrderPage() {
                 status: newOrder.status,
                 payment_status: newOrder.payment_status,
                 isCash: isCash,
-                methodId: chosenMethod?.id || null,
-                methodType: chosenMethod?.type || null,
+                isGateway: isGateway,
+                methodId: selectedPaymentMethod?.id || null,
+                methodType: selectedPaymentMethod?.type || null,
+                gatewayProvider: isGateway ? selectedOption.gw.provider_name : null,
                 amount: grandTotal
             };
             setOrderResult(resultPayload);
             setCart({});
+            setActiveOrder(newOrder);
+            localStorage.setItem(`isaji_active_order_${tableInfo.id}`, JSON.stringify(resultPayload));
 
             if (needsProof) {
-                // Simpan ke localStorage supaya kalau customer refresh HP-nya,
-                // proses upload/menunggu verifikasi tidak hilang.
-                setActiveOrder(newOrder);
-                localStorage.setItem(`isaji_active_order_${tableInfo.id}`, JSON.stringify(resultPayload));
                 setActiveTab('payment_proof');
+            } else if (isCash) {
+                // Cash: TIDAK butuh upload bukti, cukup bayar di kasir. Kasir yang menandai lunas.
+                setActiveTab('cash_wait');
+            } else if (isGateway) {
+                setActiveTab('gateway_wait');
+                await startGatewayPayment(newOrder, orderNumber);
             } else {
                 setActiveTab('success');
             }
@@ -292,6 +331,60 @@ function SelfOrderPage() {
             alert("Gagal memproses pesanan: " + err.message);
         } finally {
             setIsSubmitting(false);
+        }
+    };
+
+    // ===== PEMBAYARAN OTOMATIS VIA PAYMENT GATEWAY (mis. MIDTRANS SNAP) =====
+    // server_key TIDAK PERNAH dipakai di browser. Pembuatan transaksi & snap_token
+    // dilakukan lewat Supabase Edge Function `create-midtrans-payment` (lihat folder
+    // supabase/functions/) yang menyimpan hasilnya ke tabel `midtrans_transactions`.
+    // Pelunasan final tetap divalidasi oleh Edge Function `midtrans-webhook`, BUKAN oleh browser.
+    const loadMidtransSnapScript = (clientKey, environment) => {
+        return new Promise((resolve, reject) => {
+            if (window.snap) return resolve();
+            const existing = document.getElementById('midtrans-snap-script');
+            if (existing) { existing.addEventListener('load', () => resolve()); return; }
+            const script = document.createElement('script');
+            script.id = 'midtrans-snap-script';
+            script.src = environment === 'production'
+                ? 'https://app.midtrans.com/snap/snap.js'
+                : 'https://app.sandbox.midtrans.com/snap/snap.js';
+            script.setAttribute('data-client-key', clientKey);
+            script.onload = () => resolve();
+            script.onerror = () => reject(new Error('Gagal memuat skrip pembayaran Midtrans.'));
+            document.body.appendChild(script);
+        });
+    };
+
+    const startGatewayPayment = async (order, orderNumber) => {
+        setIsGatewayProcessing(true);
+        setGatewayError(null);
+        try {
+            const { data, error } = await supabase.functions.invoke('create-midtrans-payment', {
+                body: {
+                    branch_id: branchId,
+                    order_id: order.id,
+                    order_number: orderNumber,
+                    gross_amount: Math.round(grandTotal),
+                    customer_name: customerName,
+                    customer_phone: customerPhone
+                }
+            });
+            if (error) throw error;
+            if (!data?.snap_token) throw new Error('Token pembayaran tidak diterima dari server.');
+
+            await loadMidtransSnapScript(gatewayConfig.client_key, gatewayConfig.environment);
+
+            window.snap.pay(data.snap_token, {
+                onSuccess: () => { /* status final tetap menunggu konfirmasi webhook, polling di bawah yang akan update UI */ },
+                onPending: () => { /* tetap menunggu, polling akan menangkap perubahan */ },
+                onError: () => setGatewayError('Pembayaran gagal diproses. Silakan coba lagi.'),
+                onClose: () => setGatewayError('Anda menutup jendela pembayaran sebelum selesai. Klik "Coba Bayar Lagi" untuk mengulang.')
+            });
+        } catch (err) {
+            setGatewayError('Gagal membuka halaman pembayaran: ' + err.message + '. Pastikan Edge Function "create-midtrans-payment" sudah di-deploy dan gateway sudah dikonfigurasi manager.');
+        } finally {
+            setIsGatewayProcessing(false);
         }
     };
 
@@ -355,9 +448,10 @@ function SelfOrderPage() {
     };
 
     // ===== POLLING STATUS VERIFIKASI (tiap 5 detik selagi ada order aktif menunggu) =====
+    // Dipakai untuk 3 alur: upload bukti manual, cash (bayar di kasir), dan gateway otomatis (Midtrans).
     useEffect(() => {
         if (!orderResult?.orderId) return;
-        if (activeTab !== 'payment_proof' && activeTab !== 'payment_status') return;
+        if (!['payment_proof', 'payment_status', 'cash_wait', 'gateway_wait'].includes(activeTab)) return;
 
         let cancelled = false;
 
@@ -403,7 +497,13 @@ function SelfOrderPage() {
             const parsed = JSON.parse(saved);
             if (parsed?.orderId) {
                 setOrderResult(parsed);
-                setActiveTab('payment_status');
+                // Kalau statusnya sudah lunas simpanan lama, langsung ke success; kalau belum, arahkan
+                // ke layar tunggu yang sesuai jenis pembayarannya supaya polling status jalan lagi.
+                if (parsed.payment_status === 'paid') {
+                    setActiveTab('success');
+                } else {
+                    setActiveTab('payment_status');
+                }
             }
         } catch (e) { /* localStorage rusak, abaikan */ }
     }, [tableInfo?.id]);
@@ -554,12 +654,17 @@ function SelfOrderPage() {
                                 <span className="text-isaji-orange">Rp {grandTotal.toLocaleString('id-ID')}</span>
                             </div>
                         </div>
+                        {cartItems.length > 0 && (
+                            <button onClick={checkLocationAndProceed} className="w-full bg-isaji-navy text-white py-4 rounded-2xl font-black text-sm shadow-lg active:scale-95 transition-transform">
+                                Lanjut ke Data Pemesan
+                            </button>
+                        )}
                     </div>
                 )}
 
-                {activeTab === 'checkout' && (
+                {activeTab === 'order_form' && (
                     <div className="p-5 space-y-5 animate-fade-in">
-                        <h2 className="text-base font-black text-gray-900">Pembayaran & Data Diri</h2>
+                        <h2 className="text-base font-black text-gray-900">Data Pemesan</h2>
                         <div className="bg-white p-5 rounded-3xl border border-gray-100 shadow-sm space-y-4">
                             <div>
                                 <label className="block text-[10px] font-black text-gray-400 uppercase mb-1">Nama Pemesan</label>
@@ -569,50 +674,86 @@ function SelfOrderPage() {
                                 <label className="block text-[10px] font-black text-gray-400 uppercase mb-1">No. WhatsApp</label>
                                 <input type="tel" value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value.replace(/\D/g, '').slice(0, 14))} placeholder="Minimal 11 Angka" className="w-full px-4 py-3 rounded-xl border border-gray-200 text-sm outline-none font-mono transition-colors focus:border-isaji-orange" />
                             </div>
+                        </div>
 
-                            <div className="pt-2">
-                                <label className="block text-[10px] font-black text-gray-400 uppercase mb-2">Metode Pembayaran</label>
-                                <div className="space-y-2">
-                                    {/* Metode ini datang langsung dari payment_methods milik cabang ini saja (sudah difilter branch_id di loadSessionData) */}
-                                    {paymentMethods.length === 0 && (
-                                        <p className="text-xs text-gray-400 italic px-1">Cabang ini belum mengatur metode pembayaran.</p>
-                                    )}
-                                    {paymentMethods.map(pm => {
-                                        const isCash = pm.type === 'cash';
-                                        const isSelected = selectedPayment === pm.name;
-                                        return (
-                                            <label key={pm.id} className={`block p-4 rounded-2xl border cursor-pointer transition-colors active:scale-95 ${isSelected ? 'border-isaji-orange bg-orange-50' : 'border-gray-200'}`}>
-                                                <div className="flex items-center gap-3">
-                                                    <input type="radio" name="payment" value={pm.name} onChange={() => setSelectedPayment(pm.name)} className="w-4 h-4 accent-isaji-orange shrink-0" />
-                                                    <div className="min-w-0">
-                                                        <span className="text-sm font-bold text-gray-700 block truncate">{pm.name}</span>
-                                                        {isCash && (
-                                                            <span className="text-[10px] text-gray-400 font-semibold">
-                                                                {branch?.cash_payment_timing === 'before_order' ? 'Bayar dulu sebelum pesanan diproses' : 'Bayar nanti di kasir'}
-                                                            </span>
-                                                        )}
-                                                        {!isCash && pm.provider_details && (
-                                                            <span className="text-[10px] text-gray-400 font-semibold block truncate">{pm.provider_details}</span>
-                                                        )}
-                                                    </div>
-                                                </div>
-                                                {isSelected && pm.type === 'static_qris' && pm.qr_image_url && (
-                                                    <div className="mt-3 flex justify-center animate-pop-in">
-                                                        <img src={pm.qr_image_url} alt={`QRIS ${pm.name}`} className="w-40 h-40 object-contain rounded-xl border border-gray-100 bg-white p-2" />
-                                                    </div>
-                                                )}
-                                            </label>
-                                        );
-                                    })}
-                                </div>
+                        <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm space-y-2.5">
+                            <div className="flex justify-between text-gray-900 font-black text-base">
+                                <span>Total Tagihan</span>
+                                <span className="text-isaji-orange">Rp {grandTotal.toLocaleString('id-ID')}</span>
                             </div>
                         </div>
 
-                        <button onClick={handleConfirmOrderSubmit} className="w-full bg-isaji-navy text-white py-4 rounded-2xl font-black text-sm shadow-lg active:scale-95 transition-transform">
-                            {selectedPayment && paymentMethods.find(p => p.name === selectedPayment)?.type === 'cash' && branch?.cash_payment_timing !== 'before_order'
-                                ? `Rp ${grandTotal.toLocaleString('id-ID')} - Pesan Sekarang, Bayar di Kasir`
-                                : `Rp ${grandTotal.toLocaleString('id-ID')} - Bayar Sekarang`}
-                        </button>
+                        <div className="flex gap-3">
+                            <button onClick={() => setActiveTab('cart')} className="flex-1 py-4 bg-gray-100 text-gray-700 rounded-2xl font-bold text-sm active:scale-95 transition-transform">Kembali</button>
+                            <button onClick={handleContinueToPayment} className="flex-[1.5] bg-isaji-navy text-white py-4 rounded-2xl font-black text-sm shadow-lg active:scale-95 transition-transform">Lanjut ke Pembayaran</button>
+                        </div>
+                    </div>
+                )}
+
+                {activeTab === 'payment' && (
+                    <div className="p-5 space-y-5 animate-fade-in">
+                        <h2 className="text-base font-black text-gray-900">Pilih Metode Pembayaran</h2>
+                        <div className="bg-white p-5 rounded-3xl border border-gray-100 shadow-sm space-y-2">
+                            {paymentOptions.length === 0 && (
+                                <p className="text-xs text-gray-400 italic px-1">Cabang ini belum mengatur metode pembayaran.</p>
+                            )}
+
+                            {/* Metode manual: cash / qris statis / transfer bank / e-wallet - diatur manager di Payment Method Manager */}
+                            {paymentOptions.map(opt => {
+                                const isSelected = selectedPayment === opt.key;
+                                if (opt.kind === 'manual') {
+                                    const pm = opt.pm;
+                                    const isCash = pm.type === 'cash';
+                                    return (
+                                        <label key={opt.key} className={`block p-4 rounded-2xl border cursor-pointer transition-colors active:scale-95 ${isSelected ? 'border-isaji-orange bg-orange-50' : 'border-gray-200'}`}>
+                                            <div className="flex items-center gap-3">
+                                                <input type="radio" name="payment" value={opt.key} checked={isSelected} onChange={() => setSelectedPayment(opt.key)} className="w-4 h-4 accent-isaji-orange shrink-0" />
+                                                <div className="min-w-0">
+                                                    <span className="text-sm font-bold text-gray-700 block truncate">{pm.name}</span>
+                                                    {isCash && (
+                                                        <span className="text-[10px] text-gray-400 font-semibold">
+                                                            {branch?.cash_payment_timing === 'before_order' ? 'Bayar dulu di kasir, pesanan diproses setelah dikonfirmasi' : 'Bayar di kasir, dikonfirmasi kasir sebelum masuk dapur'}
+                                                        </span>
+                                                    )}
+                                                    {!isCash && (
+                                                        <span className="text-[10px] text-gray-400 font-semibold block">Upload bukti bayar, diverifikasi kasir</span>
+                                                    )}
+                                                    {!isCash && pm.provider_details && (
+                                                        <span className="text-[10px] text-gray-400 font-semibold block truncate">{pm.provider_details}</span>
+                                                    )}
+                                                </div>
+                                            </div>
+                                            {isSelected && pm.type === 'static_qris' && pm.qr_image_url && (
+                                                <div className="mt-3 flex justify-center animate-pop-in">
+                                                    <img src={pm.qr_image_url} alt={`QRIS ${pm.name}`} className="w-40 h-40 object-contain rounded-xl border border-gray-100 bg-white p-2" />
+                                                </div>
+                                            )}
+                                        </label>
+                                    );
+                                }
+                                // Gateway otomatis (mis. Midtrans) - langsung bayar online, tanpa upload bukti
+                                return (
+                                    <label key={opt.key} className={`block p-4 rounded-2xl border cursor-pointer transition-colors active:scale-95 ${isSelected ? 'border-isaji-orange bg-orange-50' : 'border-gray-200'}`}>
+                                        <div className="flex items-center gap-3">
+                                            <input type="radio" name="payment" value={opt.key} checked={isSelected} onChange={() => setSelectedPayment(opt.key)} className="w-4 h-4 accent-isaji-orange shrink-0" />
+                                            <div className="min-w-0">
+                                                <span className="text-sm font-bold text-gray-700 block truncate capitalize">Bayar Online ({opt.gw.provider_name})</span>
+                                                <span className="text-[10px] text-gray-400 font-semibold block">Kartu / VA / QRIS otomatis, langsung terverifikasi</span>
+                                            </div>
+                                        </div>
+                                    </label>
+                                );
+                            })}
+                        </div>
+
+                        <div className="flex gap-3">
+                            <button onClick={() => setActiveTab('order_form')} className="flex-1 py-4 bg-gray-100 text-gray-700 rounded-2xl font-bold text-sm active:scale-95 transition-transform">Kembali</button>
+                            <button onClick={handleConfirmOrderSubmit} className="flex-[1.5] bg-isaji-navy text-white py-4 rounded-2xl font-black text-sm shadow-lg active:scale-95 transition-transform">
+                                {isSelectedCash && branch?.cash_payment_timing !== 'before_order'
+                                    ? `Rp ${grandTotal.toLocaleString('id-ID')} - Pesan, Bayar di Kasir`
+                                    : `Rp ${grandTotal.toLocaleString('id-ID')} - Bayar Sekarang`}
+                            </button>
+                        </div>
                     </div>
                 )}
 
@@ -657,6 +798,52 @@ function SelfOrderPage() {
                         <button onClick={submitPaymentProof} disabled={isUploadingProof} className="w-full bg-isaji-navy text-white py-4 rounded-2xl font-black text-sm shadow-lg active:scale-95 transition-transform disabled:opacity-60">
                             {isUploadingProof ? 'Mengunggah...' : 'Kirim Bukti Pembayaran'}
                         </button>
+                    </div>
+                )}
+
+                {activeTab === 'cash_wait' && orderResult && (
+                    <div className="p-6 text-center space-y-6 animate-fade-in">
+                        <div className="w-20 h-20 bg-amber-50 text-amber-500 rounded-full flex items-center justify-center mx-auto text-3xl font-black shadow-inner">💵</div>
+                        <div>
+                            <h2 className="text-xl font-black text-gray-900">Silakan Bayar di Kasir</h2>
+                            <p className="text-sm text-gray-600 mt-2">
+                                Tunjukkan nomor pesanan <span className="font-bold">{orderResult.orderNumber}</span> ke kasir dan lakukan pembayaran tunai sebesar
+                                <span className="font-black text-isaji-orange"> Rp {Number(orderResult.amount || grandTotal).toLocaleString('id-ID')}</span>.
+                            </p>
+                            <p className="text-xs text-gray-400 mt-2">Pesanan akan otomatis masuk ke dapur setelah kasir mengonfirmasi pembayaran Anda diterima.</p>
+                        </div>
+                        <div className="flex items-center justify-center gap-2 text-amber-500">
+                            <div className="animate-spin w-5 h-5 border-2 border-amber-400 border-t-transparent rounded-full"></div>
+                            <span className="text-xs font-bold">Menunggu konfirmasi kasir...</span>
+                        </div>
+                    </div>
+                )}
+
+                {activeTab === 'gateway_wait' && orderResult && (
+                    <div className="p-6 text-center space-y-6 animate-fade-in">
+                        <div className="w-20 h-20 bg-blue-50 text-blue-500 rounded-full flex items-center justify-center mx-auto text-3xl font-black shadow-inner">💳</div>
+                        <div>
+                            <h2 className="text-xl font-black text-gray-900">Menunggu Pembayaran Online</h2>
+                            <p className="text-sm text-gray-600 mt-2">Pesanan <span className="font-bold">{orderResult.orderNumber}</span> senilai <span className="font-black text-isaji-orange">Rp {Number(orderResult.amount || grandTotal).toLocaleString('id-ID')}</span> menunggu penyelesaian pembayaran.</p>
+                        </div>
+
+                        {gatewayError && (
+                            <div className="bg-red-50 text-red-600 text-xs font-bold rounded-xl p-3 text-left">{gatewayError}</div>
+                        )}
+
+                        {!isGatewayProcessing && (
+                            <button
+                                onClick={() => startGatewayPayment(activeOrder, orderResult.orderNumber)}
+                                className="w-full bg-isaji-navy text-white py-3.5 rounded-2xl font-black active:scale-95 transition-transform"
+                            >
+                                Coba Bayar Lagi
+                            </button>
+                        )}
+
+                        <div className="flex items-center justify-center gap-2 text-blue-500">
+                            <div className="animate-spin w-5 h-5 border-2 border-blue-400 border-t-transparent rounded-full"></div>
+                            <span className="text-xs font-bold">Memeriksa status pembayaran...</span>
+                        </div>
                     </div>
                 )}
 
