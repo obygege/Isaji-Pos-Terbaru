@@ -17,13 +17,11 @@ class CartItem {
     required this.price,
     this.qty = 1,
   });
-
   double get subtotal => price * qty;
 }
 
 class CashierTab extends StatefulWidget {
   const CashierTab({super.key});
-
   @override
   State<CashierTab> createState() => _CashierTabState();
 }
@@ -39,6 +37,8 @@ class _CashierTabState extends State<CashierTab> {
   bool _isLoading = true;
   String _searchQuery = '';
   String _branchId = '';
+  String _empName = 'Kasir';
+  String _orderType = 'Dine In';
 
   final NumberFormat _currencyFormat = NumberFormat.currency(
     locale: 'id_ID',
@@ -56,8 +56,8 @@ class _CashierTabState extends State<CashierTab> {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
       _branchId = prefs.getString('branch_id') ?? '';
+      _empName = prefs.getString('emp_name') ?? 'Kasir';
     });
-
     await _fetchMenus();
   }
 
@@ -68,15 +68,11 @@ class _CashierTabState extends State<CashierTab> {
           .from('menus')
           .select('*')
           .eq('branch_id', _branchId);
-
       final List<String> extractedCategories = [];
       for (var item in res) {
         final cat = item['category']?.toString() ?? 'Lainnya';
-        if (!extractedCategories.contains(cat)) {
-          extractedCategories.add(cat);
-        }
+        if (!extractedCategories.contains(cat)) extractedCategories.add(cat);
       }
-
       setState(() {
         _menus = List<Map<String, dynamic>>.from(res);
         _categories = extractedCategories;
@@ -91,9 +87,9 @@ class _CashierTabState extends State<CashierTab> {
   void _addToCart(Map<String, dynamic> menu) {
     setState(() {
       final index = _cart.indexWhere((item) => item.menuId == menu['id']);
-      if (index >= 0) {
+      if (index >= 0)
         _cart[index].qty++;
-      } else {
+      else
         _cart.add(
           CartItem(
             menuId: menu['id'],
@@ -101,16 +97,13 @@ class _CashierTabState extends State<CashierTab> {
             price: (menu['price'] as num).toDouble(),
           ),
         );
-      }
     });
   }
 
   void _updateQty(int index, int delta) {
     setState(() {
       _cart[index].qty += delta;
-      if (_cart[index].qty <= 0) {
-        _cart.removeAt(index);
-      }
+      if (_cart[index].qty <= 0) _cart.removeAt(index);
     });
   }
 
@@ -135,7 +128,6 @@ class _CashierTabState extends State<CashierTab> {
       final orgId = prefs.getString('org_id');
       final empId = prefs.getString('emp_id');
       final shiftId = prefs.getString('shift_id');
-      final empName = prefs.getString('emp_name') ?? 'Kasir';
 
       final timestamp = DateTime.now();
       final orderNumber =
@@ -157,6 +149,7 @@ class _CashierTabState extends State<CashierTab> {
             'total_amount': _grandTotal,
             'cashier_id': empId,
             'shift_id': shiftId,
+            'notes': _orderType,
           })
           .select('id')
           .single();
@@ -171,7 +164,6 @@ class _CashierTabState extends State<CashierTab> {
           'unit_price': item.price,
           'subtotal': item.subtotal,
         });
-
         try {
           final currentMenu = _menus.firstWhere((m) => m['id'] == item.menuId);
           final currentStock = (currentMenu['stock'] as num?)?.toInt() ?? 0;
@@ -179,9 +171,7 @@ class _CashierTabState extends State<CashierTab> {
               .from('menus')
               .update({'stock': currentStock - item.qty})
               .eq('id', item.menuId);
-        } catch (e) {
-          debugPrint('Gagal potong stok menu: $e');
-        }
+        } catch (e) {}
       }
 
       await supabase.from('payments').insert({
@@ -202,7 +192,7 @@ class _CashierTabState extends State<CashierTab> {
       try {
         await PrinterHelper.printReceipt(
           orderNumber: orderNumber,
-          cashierName: empName,
+          cashierName: _empName,
           cart: _cart,
           subtotal: _subtotal,
           tax: _tax,
@@ -213,9 +203,7 @@ class _CashierTabState extends State<CashierTab> {
           change: change,
           paymentMethod: paymentMethod,
         );
-      } catch (e) {
-        debugPrint("Gagal cetak struk: $e");
-      }
+      } catch (e) {}
 
       _showSuccessDialog(orderNumber, change);
       _fetchMenus();
@@ -310,11 +298,10 @@ class _CashierTabState extends State<CashierTab> {
                         ),
                       ],
                       selected: {selectedMethod},
-                      onSelectionChanged: (Set<String> newSelection) {
-                        setDialogState(
-                          () => selectedMethod = newSelection.first,
-                        );
-                      },
+                      onSelectionChanged: (Set<String> newSelection) =>
+                          setDialogState(
+                            () => selectedMethod = newSelection.first,
+                          ),
                     ),
                     const SizedBox(height: 24),
                     if (selectedMethod == 'cash') ...[
@@ -349,11 +336,9 @@ class _CashierTabState extends State<CashierTab> {
                               ),
                               side: BorderSide(color: Colors.grey.shade300),
                             ),
-                            onPressed: () {
-                              setDialogState(
-                                () => cashController.text = amount.toString(),
-                              );
-                            },
+                            onPressed: () => setDialogState(
+                              () => cashController.text = amount.toString(),
+                            ),
                             child: Text(
                               _currencyFormat.format(amount),
                               style: const TextStyle(color: Color(0xFF0F2040)),
@@ -424,94 +409,90 @@ class _CashierTabState extends State<CashierTab> {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (context) {
-        return AlertDialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(24),
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  color: Colors.green.withValues(alpha: 0.1),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.check_circle,
-                  color: Colors.green,
-                  size: 64,
-                ),
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: Colors.green.withValues(alpha: 0.1),
+                shape: BoxShape.circle,
               ),
-              const SizedBox(height: 24),
+              child: const Icon(
+                Icons.check_circle,
+                color: Colors.green,
+                size: 64,
+              ),
+            ),
+            const SizedBox(height: 24),
+            const Text(
+              'Transaksi Berhasil!',
+              style: TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.w900,
+                color: Color(0xFF0F2040),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'No: $orderNumber',
+              style: const TextStyle(color: Colors.grey),
+            ),
+            if (change > 0) ...[
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 24),
+                child: Divider(),
+              ),
               const Text(
-                'Transaksi Berhasil!',
+                'Uang Kembali',
                 style: TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.w900,
-                  color: Color(0xFF0F2040),
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.grey,
                 ),
               ),
               const SizedBox(height: 8),
               Text(
-                'No: $orderNumber',
-                style: const TextStyle(color: Colors.grey),
+                _currencyFormat.format(change),
+                style: const TextStyle(
+                  fontSize: 36,
+                  fontWeight: FontWeight.w900,
+                  color: Colors.redAccent,
+                ),
               ),
-              if (change > 0) ...[
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 24),
-                  child: Divider(),
-                ),
-                const Text(
-                  'Uang Kembali',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.grey,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  _currencyFormat.format(change),
-                  style: const TextStyle(
-                    fontSize: 36,
-                    fontWeight: FontWeight.w900,
-                    color: Colors.redAccent,
-                  ),
-                ),
-              ],
             ],
-          ),
-          actionsPadding: const EdgeInsets.all(24),
-          actions: [
-            SizedBox(
-              width: double.infinity,
-              height: 54,
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF00B4D8),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                  ),
+          ],
+        ),
+        actionsPadding: const EdgeInsets.all(24),
+        actions: [
+          SizedBox(
+            width: double.infinity,
+            height: 54,
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF00B4D8),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
                 ),
-                onPressed: () {
-                  setState(() => _cart.clear());
-                  Navigator.pop(context);
-                },
-                child: const Text(
-                  'Pesanan Baru',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 16,
-                  ),
+              ),
+              onPressed: () {
+                setState(() => _cart.clear());
+                Navigator.pop(context);
+              },
+              child: const Text(
+                'Pesanan Baru',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
                 ),
               ),
             ),
-          ],
-        );
-      },
+          ),
+        ],
+      ),
     );
   }
 
@@ -519,22 +500,31 @@ class _CashierTabState extends State<CashierTab> {
   Widget build(BuildContext context) {
     return ResponsiveBuilder(
       builder: (context, sizingInfo) {
-        bool isTabletOrDesktop =
-            sizingInfo.deviceScreenType != DeviceScreenType.mobile;
+        // DETEKSI LANDSCAPE (Mendatar) atau perangkat besar
+        bool isLandscape =
+            MediaQuery.of(context).orientation == Orientation.landscape;
+        bool isLargeScreen =
+            sizingInfo.deviceScreenType != DeviceScreenType.mobile ||
+            isLandscape;
 
         return Scaffold(
           backgroundColor: const Color(0xFFF4F7FE),
-          body: isTabletOrDesktop
+          body: isLargeScreen
               ? Row(
                   children: [
-                    Expanded(flex: 13, child: _buildProductSection()),
+                    // PANEL TENGAH: Menu Restoran (Flex 6.5)
+                    Expanded(
+                      flex: 65,
+                      child: _buildProductSection(isLargeScreen),
+                    ),
                     Container(width: 1, color: Colors.grey.shade300),
-                    Expanded(flex: 7, child: _buildCartSection()),
+                    // PANEL KANAN: Rincian Pesanan & Bayar (Flex 3.5)
+                    Expanded(flex: 35, child: _buildCartSection(isLargeScreen)),
                   ],
                 )
               : Stack(
                   children: [
-                    _buildProductSection(),
+                    _buildProductSection(isLargeScreen),
                     if (_cart.isNotEmpty)
                       Positioned(
                         bottom: 0,
@@ -577,12 +567,12 @@ class _CashierTabState extends State<CashierTab> {
                                       top: Radius.circular(32),
                                     ),
                                   ),
-                                  child: _buildCartSection(),
+                                  child: _buildCartSection(false),
                                 ),
                               );
                             },
                             child: Text(
-                              'Keranjang (${_cart.length}) - ${_currencyFormat.format(_grandTotal)}',
+                              'Lihat Pesanan (${_cart.length}) - ${_currencyFormat.format(_grandTotal)}',
                               style: const TextStyle(
                                 color: Colors.white,
                                 fontWeight: FontWeight.w900,
@@ -599,7 +589,7 @@ class _CashierTabState extends State<CashierTab> {
     );
   }
 
-  Widget _buildProductSection() {
+  Widget _buildProductSection(bool isLandscape) {
     final filteredMenus = _menus.where((m) {
       final matchesSearch = m['name'].toString().toLowerCase().contains(
         _searchQuery.toLowerCase(),
@@ -613,99 +603,118 @@ class _CashierTabState extends State<CashierTab> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(20, 20, 20, 0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          padding: EdgeInsets.fromLTRB(20, isLandscape ? 16 : 24, 20, 10),
+          child: Row(
             children: [
-              const Text(
-                'Menu Restoran',
-                style: TextStyle(
-                  fontSize: 26,
-                  fontWeight: FontWeight.w900,
-                  color: Color(0xFF0F2040),
-                ),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                onChanged: (val) => setState(() => _searchQuery = val),
-                decoration: InputDecoration(
-                  hintText: 'Cari nama menu...',
-                  hintStyle: TextStyle(color: Colors.grey.shade400),
-                  prefixIcon: const Icon(Icons.search, color: Colors.grey),
-                  filled: true,
-                  fillColor: Colors.white,
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(16),
-                    borderSide: BorderSide.none,
-                  ),
-                  contentPadding: const EdgeInsets.symmetric(vertical: 16),
-                ),
-              ),
-              const SizedBox(height: 16),
-              SizedBox(
-                height: 40,
-                child: ListView(
-                  scrollDirection: Axis.horizontal,
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.only(right: 8.0),
-                      child: ChoiceChip(
-                        label: const Text(
-                          'Semua',
-                          style: TextStyle(fontWeight: FontWeight.bold),
-                        ),
-                        selected: _selectedCategory == null,
-                        selectedColor: const Color(0xFF0F2040),
-                        labelStyle: TextStyle(
-                          color: _selectedCategory == null
-                              ? Colors.white
-                              : Colors.black87,
-                        ),
-                        backgroundColor: Colors.white,
-                        side: BorderSide.none,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        onSelected: (selected) {
-                          setState(() => _selectedCategory = null);
-                        },
-                      ),
+              Expanded(
+                child: TextField(
+                  onChanged: (val) => setState(() => _searchQuery = val),
+                  decoration: InputDecoration(
+                    hintText: 'Cari menu...',
+                    hintStyle: TextStyle(color: Colors.grey.shade400),
+                    prefixIcon: const Icon(Icons.search, color: Colors.grey),
+                    filled: true,
+                    fillColor: Colors.white,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide.none,
                     ),
-                    ..._categories.map(
-                      (cat) => Padding(
-                        padding: const EdgeInsets.only(right: 8.0),
-                        child: ChoiceChip(
-                          label: Text(
-                            cat,
-                            style: const TextStyle(fontWeight: FontWeight.bold),
+                    contentPadding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                ),
+              ),
+              if (isLandscape) ...[
+                const SizedBox(width: 20),
+                Row(
+                  children: [
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          _empName,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w900,
+                            color: Color(0xFF0F2040),
+                            fontSize: 14,
                           ),
-                          selected: _selectedCategory == cat,
-                          selectedColor: const Color(0xFF0F2040),
-                          labelStyle: TextStyle(
-                            color: _selectedCategory == cat
-                                ? Colors.white
-                                : Colors.black87,
+                        ),
+                        Text(
+                          'Kasir',
+                          style: TextStyle(
+                            color: Colors.grey.shade500,
+                            fontSize: 11,
                           ),
-                          backgroundColor: Colors.white,
-                          side: BorderSide.none,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          onSelected: (selected) {
-                            setState(
-                              () => _selectedCategory = selected ? cat : null,
-                            );
-                          },
+                        ),
+                      ],
+                    ),
+                    const SizedBox(width: 10),
+                    CircleAvatar(
+                      radius: 18,
+                      backgroundColor: const Color(
+                        0xFF00B4D8,
+                      ).withValues(alpha: 0.2),
+                      child: Text(
+                        _empName[0].toUpperCase(),
+                        style: const TextStyle(
+                          color: Color(0xFF0F2040),
+                          fontWeight: FontWeight.bold,
                         ),
                       ),
                     ),
                   ],
                 ),
-              ),
-              const SizedBox(height: 10),
+              ],
             ],
           ),
         ),
+
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 20),
+          child: Text(
+            'Kategori',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w900,
+              color: Color(0xFF0F2040),
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        SizedBox(
+          height: 85,
+          child: ListView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            children: [
+              _buildCategorySquare(
+                title: 'Semua',
+                isSelected: _selectedCategory == null,
+                onTap: () => setState(() => _selectedCategory = null),
+              ),
+              ..._categories.map(
+                (cat) => _buildCategorySquare(
+                  title: cat,
+                  isSelected: _selectedCategory == cat,
+                  onTap: () => setState(() => _selectedCategory = cat),
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        const SizedBox(height: 16),
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 20),
+          child: Text(
+            'Spesial Untuk Anda',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w900,
+              color: Color(0xFF0F2040),
+            ),
+          ),
+        ),
+
         Expanded(
           child: _isLoading
               ? const Center(
@@ -714,60 +723,56 @@ class _CashierTabState extends State<CashierTab> {
               : filteredMenus.isEmpty
               ? const Center(
                   child: Text(
-                    "Belum ada menu di kategori ini.",
+                    "Menu tidak ditemukan.",
                     style: TextStyle(color: Colors.grey),
                   ),
                 )
               : GridView.builder(
-                  // PENTING: Padding bottom 120 agar item paling bawah tidak tertutup keranjang
-                  padding: const EdgeInsets.only(
-                    left: 20,
-                    right: 20,
-                    top: 10,
-                    bottom: 120,
+                  padding: EdgeInsets.fromLTRB(
+                    20,
+                    10,
+                    20,
+                    isLandscape ? 20 : 120,
                   ),
                   gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                    maxCrossAxisExtent: 180,
-                    childAspectRatio:
-                        0.62, // PERBAIKAN: Rasio dipanjangkan agar teks tidak bocor
-                    crossAxisSpacing: 16,
-                    mainAxisSpacing: 16,
+                    maxCrossAxisExtent: 180, // Ukuran card proporsional
+                    childAspectRatio: 0.65,
+                    crossAxisSpacing: 12,
+                    mainAxisSpacing: 12,
                   ),
                   itemCount: filteredMenus.length,
                   itemBuilder: (context, index) {
                     final menu = filteredMenus[index];
                     final String? imageUrl = menu['image_url'];
                     final int stock = (menu['stock'] as num?)?.toInt() ?? 0;
+                    final bool isOutOfStock = stock <= 0;
 
-                    return InkWell(
-                      onTap: stock > 0 ? () => _addToCart(menu) : null,
-                      borderRadius: BorderRadius.circular(20),
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(20),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.03),
-                              blurRadius: 10,
-                              offset: const Offset(0, 4),
-                            ),
-                          ],
-                          border: stock <= 0
-                              ? Border.all(color: Colors.red.shade100, width: 2)
-                              : null,
-                        ),
-                        child: Stack(
-                          children: [
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                    return Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: Colors.grey.shade100),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.02),
+                            blurRadius: 8,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Expanded(
+                            child: Stack(
                               children: [
-                                Expanded(
-                                  flex: 5, // Porsi gambar
-                                  child: ClipRRect(
-                                    borderRadius: const BorderRadius.vertical(
-                                      top: Radius.circular(20),
-                                    ),
+                                ClipRRect(
+                                  borderRadius: const BorderRadius.vertical(
+                                    top: Radius.circular(16),
+                                  ),
+                                  child: SizedBox(
+                                    width: double.infinity,
+                                    height: double.infinity,
                                     child:
                                         imageUrl != null && imageUrl.isNotEmpty
                                         ? Image.network(
@@ -779,40 +784,96 @@ class _CashierTabState extends State<CashierTab> {
                                         : _buildPlaceholderImage(),
                                   ),
                                 ),
-                                Expanded(
-                                  flex: 4, // Porsi teks lebih lega sekarang
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(
-                                      10.0,
-                                    ), // Padding dikurangi sedikit
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.spaceBetween,
-                                      children: [
-                                        Text(
-                                          menu['name'],
-                                          maxLines: 2,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: TextStyle(
-                                            fontWeight: FontWeight.w800,
-                                            fontSize: 13,
-                                            color: stock > 0
-                                                ? const Color(0xFF0F2040)
-                                                : Colors.grey,
-                                          ),
+                                if (isOutOfStock)
+                                  Container(
+                                    decoration: BoxDecoration(
+                                      color: Colors.white.withValues(
+                                        alpha: 0.7,
+                                      ),
+                                      borderRadius: const BorderRadius.vertical(
+                                        top: Radius.circular(16),
+                                      ),
+                                    ),
+                                    child: const Center(
+                                      child: Text(
+                                        'HABIS',
+                                        style: TextStyle(
+                                          color: Colors.red,
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 16,
                                         ),
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.all(10.0),
+                            child: Column(
+                              children: [
+                                Text(
+                                  menu['name'],
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 12,
+                                    color: isOutOfStock
+                                        ? Colors.grey
+                                        : const Color(0xFF0F2040),
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  child: Text(
+                                    _currencyFormat.format(
+                                      (menu['price'] as num).toDouble(),
+                                    ),
+                                    style: TextStyle(
+                                      color: isOutOfStock
+                                          ? Colors.grey
+                                          : const Color(0xFF00B4D8),
+                                      fontWeight: FontWeight.w900,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                SizedBox(
+                                  width: double.infinity,
+                                  height: 32,
+                                  child: ElevatedButton(
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: isOutOfStock
+                                          ? Colors.grey.shade300
+                                          : const Color(0xFF16A34A),
+                                      elevation: 0,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                    ),
+                                    onPressed: isOutOfStock
+                                        ? null
+                                        : () => _addToCart(menu),
+                                    child: const Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        Icon(
+                                          Icons.add,
+                                          color: Colors.white,
+                                          size: 14,
+                                        ),
+                                        SizedBox(width: 4),
                                         Text(
-                                          _currencyFormat.format(
-                                            (menu['price'] as num).toDouble(),
-                                          ),
+                                          'ADD',
                                           style: TextStyle(
-                                            color: stock > 0
-                                                ? const Color(0xFF00B4D8)
-                                                : Colors.grey,
-                                            fontWeight: FontWeight.w900,
-                                            fontSize: 14,
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 11,
                                           ),
                                         ),
                                       ],
@@ -821,32 +882,8 @@ class _CashierTabState extends State<CashierTab> {
                                 ),
                               ],
                             ),
-                            Positioned(
-                              top: 8,
-                              right: 8,
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 4,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: stock > 0
-                                      ? Colors.black.withValues(alpha: 0.6)
-                                      : Colors.red,
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: Text(
-                                  stock > 0 ? 'Stok: $stock' : 'Habis',
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
                     );
                   },
@@ -856,66 +893,128 @@ class _CashierTabState extends State<CashierTab> {
     );
   }
 
-  Widget _buildPlaceholderImage() {
-    return Container(
-      color: Colors.grey.shade100,
-      child: Center(
-        child: Icon(
-          Icons.fastfood_rounded,
-          color: Colors.grey.shade300,
-          size: 40,
+  Widget _buildCategorySquare({
+    required String title,
+    required bool isSelected,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 80,
+        margin: const EdgeInsets.only(right: 12),
+        decoration: BoxDecoration(
+          color: isSelected
+              ? const Color(0xFF00B4D8).withValues(alpha: 0.1)
+              : Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: isSelected ? const Color(0xFF00B4D8) : Colors.grey.shade200,
+            width: isSelected ? 2 : 1,
+          ),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.fastfood,
+              color: isSelected
+                  ? const Color(0xFF00B4D8)
+                  : Colors.grey.shade600,
+              size: 24,
+            ),
+            const SizedBox(height: 6),
+            Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: isSelected
+                    ? const Color(0xFF0F2040)
+                    : Colors.grey.shade600,
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                fontSize: 11,
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
 
-  Widget _buildCartSection() {
+  Widget _buildPlaceholderImage() {
+    return Container(
+      color: Colors.grey.shade100,
+      child: Center(
+        child: Icon(
+          Icons.restaurant_menu,
+          color: Colors.grey.shade300,
+          size: 32,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCartSection(bool isLandscape) {
     return Container(
       color: Colors.white,
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(
-              border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
-            ),
-            child: Row(
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 10),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Icon(
-                  Icons.shopping_bag_outlined,
-                  color: Color(0xFF0F2040),
-                  size: 28,
-                ),
-                const SizedBox(width: 12),
                 const Text(
-                  'Keranjang',
+                  'Order Details',
                   style: TextStyle(
                     fontSize: 20,
                     fontWeight: FontWeight.w900,
                     color: Color(0xFF0F2040),
                   ),
                 ),
-                const Spacer(),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 6,
-                  ),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF00B4D8).withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Text(
-                    '${_cart.length} Item',
-                    style: const TextStyle(
-                      color: Color(0xFF00B4D8),
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
+                const SizedBox(height: 6),
+                Text(
+                  DateFormat('EEE, dd MMM yyyy • HH:mm').format(DateTime.now()),
+                  style: TextStyle(color: Colors.grey.shade500, fontSize: 12),
                 ),
               ],
             ),
           ),
+
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: SegmentedButton<String>(
+              style: SegmentedButton.styleFrom(
+                backgroundColor: Colors.white,
+                selectedForegroundColor: const Color(0xFF00B4D8),
+                selectedBackgroundColor: const Color(
+                  0xFF00B4D8,
+                ).withValues(alpha: 0.1),
+                side: BorderSide(color: Colors.grey.shade300),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              segments: const [
+                ButtonSegment(
+                  value: 'Dine In',
+                  label: Text('Dine In', style: TextStyle(fontSize: 12)),
+                ),
+                ButtonSegment(
+                  value: 'Takeout',
+                  label: Text('Takeout', style: TextStyle(fontSize: 12)),
+                ),
+              ],
+              selected: {_orderType},
+              onSelectionChanged: (Set<String> newSelection) =>
+                  setState(() => _orderType = newSelection.first),
+            ),
+          ),
+          const SizedBox(height: 12),
+          const Divider(),
+
           Expanded(
             child: _cart.isEmpty
                 ? Center(
@@ -924,15 +1023,15 @@ class _CashierTabState extends State<CashierTab> {
                       children: [
                         Icon(
                           Icons.remove_shopping_cart_outlined,
-                          size: 64,
+                          size: 50,
                           color: Colors.grey.shade300,
                         ),
-                        const SizedBox(height: 16),
+                        const SizedBox(height: 12),
                         Text(
                           'Belum ada pesanan',
                           style: TextStyle(
                             color: Colors.grey.shade500,
-                            fontSize: 16,
+                            fontSize: 14,
                             fontWeight: FontWeight.w600,
                           ),
                         ),
@@ -940,14 +1039,17 @@ class _CashierTabState extends State<CashierTab> {
                     ),
                   )
                 : ListView.separated(
-                    padding: const EdgeInsets.all(24),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 10,
+                    ),
                     itemCount: _cart.length,
                     separatorBuilder: (context, index) =>
-                        const Divider(height: 32),
+                        const SizedBox(height: 16),
                     itemBuilder: (context, index) {
                       final item = _cart[index];
                       return Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                        crossAxisAlignment: CrossAxisAlignment.center,
                         children: [
                           Expanded(
                             child: Column(
@@ -957,7 +1059,7 @@ class _CashierTabState extends State<CashierTab> {
                                   item.name,
                                   style: const TextStyle(
                                     fontWeight: FontWeight.w800,
-                                    fontSize: 15,
+                                    fontSize: 13,
                                     color: Color(0xFF0F2040),
                                   ),
                                 ),
@@ -965,61 +1067,69 @@ class _CashierTabState extends State<CashierTab> {
                                 Text(
                                   _currencyFormat.format(item.price),
                                   style: const TextStyle(
-                                    color: Colors.grey,
+                                    color: Color(0xFF00B4D8),
                                     fontWeight: FontWeight.w600,
+                                    fontSize: 12,
                                   ),
                                 ),
                               ],
                             ),
                           ),
-                          Row(
-                            children: [
-                              IconButton(
-                                icon: Icon(
-                                  Icons.remove_circle_outline,
-                                  color: Colors.grey.shade400,
+                          Container(
+                            decoration: BoxDecoration(
+                              color: Colors.grey.shade50,
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: Colors.grey.shade200),
+                            ),
+                            child: Row(
+                              children: [
+                                IconButton(
+                                  icon: Icon(
+                                    Icons.remove,
+                                    color: Colors.grey.shade600,
+                                    size: 18,
+                                  ),
+                                  onPressed: () => _updateQty(index, -1),
+                                  constraints: const BoxConstraints(
+                                    minWidth: 30,
+                                    minHeight: 30,
+                                  ),
+                                  padding: EdgeInsets.zero,
                                 ),
-                                onPressed: () => _updateQty(index, -1),
-                              ),
-                              SizedBox(
-                                width: 30,
-                                child: Text(
+                                Text(
                                   '${item.qty}',
-                                  textAlign: TextAlign.center,
                                   style: const TextStyle(
                                     fontWeight: FontWeight.w900,
-                                    fontSize: 16,
+                                    fontSize: 13,
                                   ),
                                 ),
-                              ),
-                              IconButton(
-                                icon: const Icon(
-                                  Icons.add_circle,
-                                  color: Color(0xFF00B4D8),
+                                IconButton(
+                                  icon: const Icon(
+                                    Icons.add,
+                                    color: Color(0xFF00B4D8),
+                                    size: 18,
+                                  ),
+                                  onPressed: () => _updateQty(index, 1),
+                                  constraints: const BoxConstraints(
+                                    minWidth: 30,
+                                    minHeight: 30,
+                                  ),
+                                  padding: EdgeInsets.zero,
                                 ),
-                                onPressed: () => _updateQty(index, 1),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
                         ],
                       );
                     },
                   ),
           ),
+
           Container(
-            padding: const EdgeInsets.all(24),
+            padding: EdgeInsets.all(isLandscape ? 16 : 20),
             decoration: BoxDecoration(
-              color: Colors.white,
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.05),
-                  blurRadius: 20,
-                  offset: const Offset(0, -10),
-                ),
-              ],
-              borderRadius: const BorderRadius.vertical(
-                top: Radius.circular(32),
-              ),
+              color: Colors.grey.shade50,
+              border: Border(top: BorderSide(color: Colors.grey.shade200)),
             ),
             child: SafeArea(
               top: false,
@@ -1029,10 +1139,11 @@ class _CashierTabState extends State<CashierTab> {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       const Text(
-                        'Subtotal',
+                        'Sub Total',
                         style: TextStyle(
                           color: Colors.grey,
                           fontWeight: FontWeight.w600,
+                          fontSize: 13,
                         ),
                       ),
                       Text(
@@ -1040,19 +1151,21 @@ class _CashierTabState extends State<CashierTab> {
                         style: const TextStyle(
                           fontWeight: FontWeight.bold,
                           color: Color(0xFF0F2040),
+                          fontSize: 13,
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 6),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       const Text(
-                        'PB1 (10%)',
+                        'Tax (10%)',
                         style: TextStyle(
                           color: Colors.grey,
                           fontWeight: FontWeight.w600,
+                          fontSize: 13,
                         ),
                       ),
                       Text(
@@ -1060,22 +1173,23 @@ class _CashierTabState extends State<CashierTab> {
                         style: const TextStyle(
                           fontWeight: FontWeight.bold,
                           color: Color(0xFF0F2040),
+                          fontSize: 13,
                         ),
                       ),
                     ],
                   ),
                   const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 16),
+                    padding: EdgeInsets.symmetric(vertical: 10),
                     child: Divider(height: 1),
                   ),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       const Text(
-                        'TOTAL',
+                        'Total',
                         style: TextStyle(
                           fontWeight: FontWeight.w900,
-                          fontSize: 18,
+                          fontSize: 16,
                           color: Color(0xFF0F2040),
                         ),
                       ),
@@ -1083,35 +1197,59 @@ class _CashierTabState extends State<CashierTab> {
                         _currencyFormat.format(_grandTotal),
                         style: const TextStyle(
                           fontWeight: FontWeight.w900,
-                          fontSize: 24,
+                          fontSize: 20,
                           color: Color(0xFF00B4D8),
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 24),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 56,
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF0F2040),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            side: const BorderSide(color: Color(0xFF00B4D8)),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                          ),
+                          onPressed: () {},
+                          child: const Text(
+                            'Simpan Bill',
+                            style: TextStyle(
+                              color: Color(0xFF00B4D8),
+                              fontWeight: FontWeight.w800,
+                              fontSize: 12,
+                            ),
+                          ),
                         ),
-                        elevation: 0,
                       ),
-                      onPressed: _cart.isEmpty ? null : _showPaymentDialog,
-                      child: const Text(
-                        'BAYAR SEKARANG',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w900,
-                          fontSize: 16,
-                          letterSpacing: 1,
+                      const SizedBox(width: 8),
+                      Expanded(
+                        flex: 2,
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF0F2040),
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            elevation: 0,
+                          ),
+                          onPressed: _cart.isEmpty ? null : _showPaymentDialog,
+                          child: Text(
+                            'Charge ${_currencyFormat.format(_grandTotal)}',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w900,
+                              fontSize: 12,
+                            ),
+                          ),
                         ),
                       ),
-                    ),
+                    ],
                   ),
                 ],
               ),
