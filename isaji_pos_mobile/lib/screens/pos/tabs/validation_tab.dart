@@ -307,7 +307,9 @@ class _ValidationTabState extends State<ValidationTab> {
           ),
           contentPadding: EdgeInsets.zero,
           content: SizedBox(
-            width: 450,
+            width: MediaQuery.of(context).size.width < 500
+                ? MediaQuery.of(context).size.width - 80
+                : 450,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -636,8 +638,9 @@ class _ValidationTabState extends State<ValidationTab> {
                             ? 1
                             : 2;
                         if (sizingInfo.deviceScreenType ==
-                            DeviceScreenType.desktop)
+                            DeviceScreenType.desktop) {
                           crossAxisCount = 3;
+                        }
 
                         return RefreshIndicator(
                           onRefresh: _fetchQueue,

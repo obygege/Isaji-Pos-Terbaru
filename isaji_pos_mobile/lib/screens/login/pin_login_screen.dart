@@ -153,6 +153,9 @@ class _PinLoginScreenState extends State<PinLoginScreen> {
             child: SingleChildScrollView(
               child: Container(
                 width: isTablet ? 450 : double.infinity,
+                constraints: BoxConstraints(
+                  maxWidth: MediaQuery.of(context).size.width - 32,
+                ),
                 padding: const EdgeInsets.symmetric(
                   horizontal: 40,
                   vertical: 48,

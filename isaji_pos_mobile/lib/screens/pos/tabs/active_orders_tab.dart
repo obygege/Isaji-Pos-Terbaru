@@ -3,16 +3,18 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/intl.dart';
 
-/// Tab "Pesanan Masuk" — antrean verifikasi bukti bayar QRIS / Transfer Bank
-/// manual dari customer (self-order via QR meja).
-///
-/// Alur:
-///  - Customer upload bukti bayar -> baris baru di `payment_verifications`
-///    (status = 'pending') dan order terkait berstatus
-///    orders.status = 'awaiting_payment', orders.payment_status = 'pending_verification'.
-///  - Kasir di sini bisa TERIMA (order lanjut ke dapur/barista, tercatat di
-///    `payments`) atau TOLAK (wajib isi alasan, customer akan lihat alasan
-///    itu di HP-nya dan bisa upload ulang bukti pada order yang sama).
+import '../../../utils/printer_helper.dart';
+import '../../../services/printer_service.dart';
+import '../../../utils/responsive.dart';
+
+const _navy = Color(0xFF0F2040);
+const _cyan = Color(0xFF00B4D8);
+
+/// Tab "Pesanan Aktif" — daftar order yang sudah dibayar/masuk tapi
+/// belum selesai (status: pending / preparing / ready), baik dari POS
+/// langsung maupun dari self-order QR meja yang sudah diverifikasi.
+/// Kasir bisa mengubah status pesanan dan mencetak ulang nota / tiket
+/// dapur langsung dari sini.
 class ActiveOrdersTab extends StatefulWidget {
   const ActiveOrdersTab({super.key});
 
@@ -24,16 +26,15 @@ class _ActiveOrdersTabState extends State<ActiveOrdersTab> {
   final supabase = Supabase.instance.client;
 
   String _branchId = '';
-  String? _empId;
+  String _storeName = 'ISAJI POS';
+  String? _storeAddress;
+  String? _storePhone;
   bool _isLoading = true;
   String? _errorMsg;
-  List<Map<String, dynamic>> _pendingVerifications = [];
+  List<Map<String, dynamic>> _orders = [];
+  final Set<String> _busyIds = {};
 
-  final NumberFormat _currencyFormat = NumberFormat.currency(
-    locale: 'id_ID',
-    symbol: 'Rp ',
-    decimalDigits: 0,
-  );
+  static const _activeStatuses = ['pending', 'preparing', 'ready'];
 
   @override
   void initState() {
@@ -43,14 +44,29 @@ class _ActiveOrdersTabState extends State<ActiveOrdersTab> {
 
   Future<void> _loadSessionAndData() async {
     final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      _branchId = prefs.getString('branch_id') ?? '';
-      _empId = prefs.getString('emp_id');
-    });
-    await _fetchQueue();
+    _branchId = prefs.getString('branch_id') ?? '';
+    await Future.wait([_fetchOrders(), _fetchBranchInfo(prefs)]);
   }
 
-  Future<void> _fetchQueue() async {
+  Future<void> _fetchBranchInfo(SharedPreferences prefs) async {
+    if (_branchId.isEmpty) return;
+    try {
+      final branch = await supabase
+          .from('branches')
+          .select('name, address, phone')
+          .eq('id', _branchId)
+          .maybeSingle();
+      if (branch != null && mounted) {
+        setState(() {
+          _storeName = branch['name']?.toString() ?? _storeName;
+          _storeAddress = branch['address']?.toString();
+          _storePhone = branch['phone']?.toString();
+        });
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _fetchOrders() async {
     if (_branchId.isEmpty) {
       setState(() {
         _isLoading = false;
@@ -58,252 +74,173 @@ class _ActiveOrdersTabState extends State<ActiveOrdersTab> {
       });
       return;
     }
-
     setState(() {
       _isLoading = true;
       _errorMsg = null;
     });
-
     try {
-      // Ambil pengajuan bukti bayar yang masih menunggu verifikasi di cabang ini,
-      // sekaligus data order & nomor mejanya untuk ditampilkan ke kasir.
       final res = await supabase
-          .from('payment_verifications')
+          .from('orders')
           .select(
-            '*, orders!payment_verifications_order_id_fkey(id, order_number, customer_name, customer_phone, total_amount, table_id, tables(name))',
+            '*, tables(name), order_items(id, product_id, qty, unit_price, subtotal, notes, products(name))',
           )
           .eq('branch_id', _branchId)
-          .eq('status', 'pending')
+          .inFilter('status', _activeStatuses)
           .order('created_at', ascending: true);
 
-      setState(() {
-        _pendingVerifications = List<Map<String, dynamic>>.from(res);
-      });
+      setState(() => _orders = List<Map<String, dynamic>>.from(res));
     } catch (e) {
-      setState(() => _errorMsg = 'Gagal memuat antrean: $e');
+      setState(() => _errorMsg = 'Gagal memuat pesanan aktif: $e');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
-  String _mapMethodEnum(String? methodType) {
-    if (methodType == 'bank_transfer') return 'transfer';
-    return 'qris'; // static_qris & ewallet manual dicatat sebagai 'qris'
-  }
-
-  Future<void> _acceptVerification(Map<String, dynamic> verif) async {
-    final order = verif['orders'] as Map<String, dynamic>?;
-    final confirmed = await _confirmDialog(
-      title: 'Terima Pembayaran?',
-      message:
-          'Pesanan ${order?['order_number'] ?? '-'} akan langsung diproses dan diteruskan ke dapur/barista.',
-      confirmLabel: 'Terima & Proses',
-      confirmColor: const Color(0xFF16A34A),
-    );
-    if (confirmed != true) return;
-
-    _showBlockingLoader();
-    try {
-      final now = DateTime.now().toIso8601String();
-
-      await supabase
-          .from('payment_verifications')
-          .update({
-            'status': 'accepted',
-            'reviewed_by': _empId,
-            'reviewed_at': now,
-          })
-          .eq('id', verif['id']);
-
-      await supabase
-          .from('orders')
-          .update({
-            'status': 'pending', // masuk antrean dapur/barista normal
-            'payment_status': 'paid',
-            'active_payment_verification_id': verif['id'],
-          })
-          .eq('id', verif['order_id']);
-
-      await supabase.from('payments').insert({
-        'order_id': verif['order_id'],
-        'method': _mapMethodEnum(verif['method_type']),
-        'amount': verif['amount'],
-        'received_by': _empId,
-        'payment_verification_id': verif['id'],
-      });
-
-      if (!mounted) return;
-      Navigator.pop(context); // tutup loader
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Pembayaran diterima, pesanan diteruskan ke dapur.'),
-          backgroundColor: Color(0xFF16A34A),
-        ),
-      );
-      _fetchQueue();
-    } catch (e) {
-      if (!mounted) return;
-      Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Gagal memproses: $e'), backgroundColor: Colors.red),
-      );
+  String _nextStatus(String current) {
+    switch (current) {
+      case 'pending':
+        return 'preparing';
+      case 'preparing':
+        return 'ready';
+      case 'ready':
+        return 'completed';
+      default:
+        return current;
     }
   }
 
-  Future<void> _rejectVerification(Map<String, dynamic> verif) async {
-    final reasonController = TextEditingController();
-    final order = verif['orders'] as Map<String, dynamic>?;
-
-    final reason = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Text('Tolak Bukti — ${order?['order_number'] ?? '-'}'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Alasan penolakan wajib diisi. Customer akan melihat alasan ini dan bisa upload ulang bukti.',
-              style: TextStyle(fontSize: 12, color: Colors.grey),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: reasonController,
-              autofocus: true,
-              maxLines: 3,
-              decoration: const InputDecoration(
-                hintText: 'Contoh: Nominal tidak sesuai / bukti buram / belum masuk rekening',
-                border: OutlineInputBorder(),
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Batal'),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            onPressed: () {
-              if (reasonController.text.trim().isEmpty) return;
-              Navigator.pop(context, reasonController.text.trim());
-            },
-            child: const Text('Tolak', style: TextStyle(color: Colors.white)),
-          ),
-        ],
-      ),
-    );
-
-    if (reason == null || reason.isEmpty) return;
-
-    _showBlockingLoader();
-    try {
-      final now = DateTime.now().toIso8601String();
-
-      await supabase
-          .from('payment_verifications')
-          .update({
-            'status': 'rejected',
-            'rejection_reason': reason,
-            'reviewed_by': _empId,
-            'reviewed_at': now,
-          })
-          .eq('id', verif['id']);
-
-      // Order TETAP 'awaiting_payment' (belum ke dapur) sampai customer upload ulang & diterima.
-      await supabase
-          .from('orders')
-          .update({'payment_status': 'rejected'})
-          .eq('id', verif['order_id']);
-
-      if (!mounted) return;
-      Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Bukti pembayaran ditolak. Customer akan diminta upload ulang.'),
-          backgroundColor: Colors.orange,
-        ),
-      );
-      _fetchQueue();
-    } catch (e) {
-      if (!mounted) return;
-      Navigator.pop(context);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Gagal memproses: $e'), backgroundColor: Colors.red),
-      );
+  String _statusLabel(String status) {
+    switch (status) {
+      case 'pending':
+        return 'Menunggu Diproses';
+      case 'preparing':
+        return 'Sedang Disiapkan';
+      case 'ready':
+        return 'Siap Disajikan';
+      case 'completed':
+        return 'Selesai';
+      default:
+        return status;
     }
   }
 
-  Future<bool?> _confirmDialog({
-    required String title,
-    required String message,
-    required String confirmLabel,
-    required Color confirmColor,
-  }) {
-    return showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Text(title),
-        content: Text(message),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Batal')),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: confirmColor),
-            onPressed: () => Navigator.pop(context, true),
-            child: Text(confirmLabel, style: const TextStyle(color: Colors.white)),
-          ),
-        ],
-      ),
-    );
+  Color _statusColor(String status) {
+    switch (status) {
+      case 'pending':
+        return Colors.orange;
+      case 'preparing':
+        return _cyan;
+      case 'ready':
+        return const Color(0xFF16A34A);
+      default:
+        return Colors.grey;
+    }
   }
 
-  void _showBlockingLoader() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => const Center(
-        child: CircularProgressIndicator(color: Color(0xFF00B4D8)),
-      ),
-    );
-  }
-
-  void _openProofPreview(String url) {
-    showDialog(
-      context: context,
-      builder: (context) => Dialog(
-        backgroundColor: Colors.transparent,
-        insetPadding: const EdgeInsets.all(16),
-        child: Stack(
-          alignment: Alignment.topRight,
-          children: [
-            InteractiveViewer(
-              child: Image.network(
-                url,
-                fit: BoxFit.contain,
-                errorBuilder: (context, error, stackTrace) => const Padding(
-                  padding: EdgeInsets.all(24),
-                  child: Text(
-                    'Gagal memuat gambar bukti bayar.',
-                    style: TextStyle(color: Colors.white),
-                  ),
-                ),
-              ),
-            ),
-            IconButton(
-              icon: const Icon(Icons.close, color: Colors.white, size: 32),
-              onPressed: () => Navigator.pop(context),
-            ),
-          ],
+  Future<void> _advanceStatus(Map<String, dynamic> order) async {
+    final id = order['id'] as String;
+    final next = _nextStatus(order['status'] as String);
+    setState(() => _busyIds.add(id));
+    try {
+      await supabase.from('orders').update({'status': next}).eq('id', id);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Pesanan ${order['order_number']} -> ${_statusLabel(next)}'),
+          backgroundColor: Colors.green,
         ),
-      ),
+      );
+      await _fetchOrders();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Gagal mengubah status: $e'), backgroundColor: Colors.red),
+      );
+    } finally {
+      if (mounted) setState(() => _busyIds.remove(id));
+    }
+  }
+
+  ReceiptData _buildReceiptData(Map<String, dynamic> order, {required String paymentMethod}) {
+    final items = List<Map<String, dynamic>>.from(order['order_items'] ?? []);
+    final createdAt = DateTime.tryParse(order['created_at']?.toString() ?? '') ?? DateTime.now();
+    final tableName = order['tables']?['name'];
+
+    return ReceiptData(
+      storeName: _storeName,
+      storeAddress: _storeAddress,
+      storePhone: _storePhone,
+      orderNumber: order['order_number']?.toString() ?? '-',
+      cashierName: '-',
+      orderType: order['channel']?.toString() ?? '-',
+      dateTime: createdAt,
+      tableName: tableName,
+      customerName: order['customer_name']?.toString(),
+      items: items
+          .map((it) => ReceiptLineItem(
+                name: it['products']?['name']?.toString() ?? 'Item',
+                qty: (it['qty'] as num?) ?? 0,
+                price: (it['unit_price'] as num?)?.toDouble() ?? 0,
+                subtotal: (it['subtotal'] as num?)?.toDouble() ?? 0,
+                notes: it['notes']?.toString(),
+              ))
+          .toList(),
+      subtotal: (order['subtotal'] as num?)?.toDouble() ?? 0,
+      discount: (order['discount_amount'] as num?)?.toDouble() ?? 0,
+      tax: (order['tax_amount'] as num?)?.toDouble() ?? 0,
+      serviceCharge: (order['service_charge'] as num?)?.toDouble() ?? 0,
+      grandTotal: (order['total_amount'] as num?)?.toDouble() ?? 0,
+      paymentMethod: paymentMethod,
+      amountTendered: (order['total_amount'] as num?)?.toDouble() ?? 0,
+      change: 0,
     );
+  }
+
+  Future<void> _printReceipt(Map<String, dynamic> order) async {
+    await _runPrint(order, kitchen: false);
+  }
+
+  Future<void> _printKitchenTicket(Map<String, dynamic> order) async {
+    await _runPrint(order, kitchen: true);
+  }
+
+  Future<void> _runPrint(Map<String, dynamic> order, {required bool kitchen}) async {
+    final id = order['id'] as String;
+    setState(() => _busyIds.add('$id-print'));
+    try {
+      final data = _buildReceiptData(order, paymentMethod: order['payment_status']?.toString() ?? '-');
+      final results = kitchen
+          ? await PrinterService.printKitchenTicketToAllAssigned(data)
+          : await PrinterService.printReceiptToAllAssigned(data);
+
+      if (!mounted) return;
+      if (results.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Belum ada printer ${kitchen ? 'dapur' : 'nota'} terpasang.')),
+        );
+        return;
+      }
+      final failed = results.where((r) => !r.success).toList();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(failed.isEmpty ? 'Berhasil dicetak.' : 'Sebagian gagal: ${failed.map((f) => f.printer.name).join(', ')}'),
+          backgroundColor: failed.isEmpty ? Colors.green : Colors.orange,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Gagal mencetak: $e'), backgroundColor: Colors.red),
+      );
+    } finally {
+      if (mounted) setState(() => _busyIds.remove('$id-print'));
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    final columns = Responsive.gridColumns(context, mobile: 1, tablet: 2, desktop: 3);
+
     return Scaffold(
       backgroundColor: const Color(0xFFF9FAFB),
       body: SafeArea(
@@ -315,27 +252,25 @@ class _ActiveOrdersTabState extends State<ActiveOrdersTab> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text(
-                    'Pesanan Masuk (Self-Order)',
-                    style: TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.w900,
-                      color: Color(0xFF0F2040),
+                  const Expanded(
+                    child: Text(
+                      'Pesanan Aktif',
+                      style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: _navy),
                     ),
                   ),
                   IconButton(
-                    icon: const Icon(Icons.refresh, color: Color(0xFF0F2040)),
-                    onPressed: _fetchQueue,
+                    icon: const Icon(Icons.refresh, color: _navy),
+                    onPressed: _fetchOrders,
                   ),
                 ],
               ),
               const SizedBox(height: 4),
               const Text(
-                'Verifikasi bukti bayar QRIS/Transfer sebelum pesanan masuk dapur.',
+                'Pesanan yang sudah dibayar dan sedang berjalan di dapur/meja.',
                 style: TextStyle(color: Colors.grey, fontSize: 13),
               ),
               const SizedBox(height: 16),
-              Expanded(child: _buildBody()),
+              Expanded(child: _buildBody(columns)),
             ],
           ),
         ),
@@ -343,147 +278,176 @@ class _ActiveOrdersTabState extends State<ActiveOrdersTab> {
     );
   }
 
-  Widget _buildBody() {
+  Widget _buildBody(int columns) {
     if (_isLoading) {
-      return const Center(child: CircularProgressIndicator(color: Color(0xFF00B4D8)));
+      return const Center(child: CircularProgressIndicator(color: _cyan));
     }
-
     if (_errorMsg != null) {
-      return Center(
-        child: Text(_errorMsg!, style: const TextStyle(color: Colors.red)),
-      );
+      return Center(child: Text(_errorMsg!, style: const TextStyle(color: Colors.red)));
     }
-
-    if (_pendingVerifications.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.dining_outlined, size: 80, color: Colors.grey.shade300),
-            const SizedBox(height: 16),
-            Text(
-              'Belum ada bukti pembayaran yang perlu diverifikasi.',
-              style: TextStyle(color: Colors.grey.shade500, fontSize: 15),
-              textAlign: TextAlign.center,
+    if (_orders.isEmpty) {
+      return LayoutBuilder(
+        builder: (context, constraints) => SingleChildScrollView(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: constraints.maxHeight),
+            child: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.restaurant_menu, size: 72, color: Colors.grey.shade300),
+                  const SizedBox(height: 16),
+                  Text('Tidak ada pesanan aktif saat ini.', style: TextStyle(color: Colors.grey.shade500, fontSize: 14)),
+                ],
+              ),
             ),
-          ],
+          ),
         ),
       );
     }
 
     return RefreshIndicator(
-      onRefresh: _fetchQueue,
-      child: ListView.separated(
-        physics: const AlwaysScrollableScrollPhysics(),
-        itemCount: _pendingVerifications.length,
-        separatorBuilder: (context, index) => const SizedBox(height: 12),
-        itemBuilder: (context, index) {
-          final verif = _pendingVerifications[index];
-          final order = verif['orders'] as Map<String, dynamic>?;
-          final tableName = order?['tables']?['name'];
-          final createdAt = DateTime.tryParse(verif['created_at'] ?? '');
+      onRefresh: _fetchOrders,
+      child: GridView.builder(
+        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: columns,
+          mainAxisExtent: 250,
+          crossAxisSpacing: 12,
+          mainAxisSpacing: 12,
+        ),
+        itemCount: _orders.length,
+        itemBuilder: (context, index) => _buildOrderCard(_orders[index]),
+      ),
+    );
+  }
 
-          return Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: Colors.grey.shade200),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.03),
-                  blurRadius: 10,
-                  offset: const Offset(0, 4),
+  Widget _buildOrderCard(Map<String, dynamic> order) {
+    final status = order['status']?.toString() ?? 'pending';
+    final id = order['id'] as String;
+    final busy = _busyIds.contains(id);
+    final printing = _busyIds.contains('$id-print');
+    final items = List<Map<String, dynamic>>.from(order['order_items'] ?? []);
+    final tableName = order['tables']?['name'];
+    final createdAt = DateTime.tryParse(order['created_at']?.toString() ?? '');
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.grey.shade200),
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.03), blurRadius: 8, offset: const Offset(0, 4))],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  order['order_number']?.toString() ?? '-',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 14, color: _navy),
                 ),
-              ],
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                GestureDetector(
-                  onTap: () => _openProofPreview(verif['proof_url']),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
-                    child: Image.network(
-                      verif['proof_url'],
-                      width: 72,
-                      height: 72,
-                      fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) => Container(
-                        width: 72,
-                        height: 72,
-                        color: Colors.grey.shade100,
-                        child: const Icon(Icons.image_not_supported, color: Colors.grey),
-                      ),
-                    ),
-                  ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: _statusColor(status).withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(8),
                 ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                child: Text(
+                  _statusLabel(status),
+                  style: TextStyle(color: _statusColor(status), fontSize: 10, fontWeight: FontWeight.bold),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            [
+              if (tableName != null) 'Meja $tableName',
+              if (createdAt != null) DateFormat('HH:mm').format(createdAt.toLocal()),
+            ].join(' • '),
+            style: TextStyle(color: Colors.grey.shade500, fontSize: 11),
+          ),
+          const Divider(height: 16),
+          Expanded(
+            child: ListView.builder(
+              itemCount: items.length,
+              itemBuilder: (context, i) {
+                final it = items[i];
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 2),
+                  child: Row(
                     children: [
-                      Text(
-                        order?['order_number'] ?? '-',
-                        style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 15, color: Color(0xFF0F2040)),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        '${tableName != null ? 'Meja $tableName • ' : ''}${verif['method_type'] == 'bank_transfer' ? 'Transfer Bank' : 'QRIS'}',
-                        style: const TextStyle(fontSize: 12, color: Colors.grey, fontWeight: FontWeight.w600),
-                      ),
-                      if (order?['customer_name'] != null)
-                        Text(
-                          order!['customer_name'],
-                          style: const TextStyle(fontSize: 12, color: Colors.grey),
+                      Text('${it['qty']}x', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          it['products']?['name']?.toString() ?? 'Item',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 12),
                         ),
-                      const SizedBox(height: 6),
-                      Text(
-                        _currencyFormat.format((verif['amount'] as num?)?.toDouble() ?? 0),
-                        style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 15, color: Color(0xFF00B4D8)),
-                      ),
-                      if (createdAt != null)
-                        Text(
-                          DateFormat('HH:mm').format(createdAt.toLocal()),
-                          style: const TextStyle(fontSize: 11, color: Colors.grey),
-                        ),
-                      const SizedBox(height: 10),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: OutlinedButton(
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: Colors.red,
-                                side: const BorderSide(color: Colors.red),
-                                padding: const EdgeInsets.symmetric(vertical: 10),
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                              ),
-                              onPressed: () => _rejectVerification(verif),
-                              child: const Text('Tolak', style: TextStyle(fontWeight: FontWeight.w800)),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: ElevatedButton(
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFF16A34A),
-                                padding: const EdgeInsets.symmetric(vertical: 10),
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                                elevation: 0,
-                              ),
-                              onPressed: () => _acceptVerification(verif),
-                              child: const Text('Terima', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800)),
-                            ),
-                          ),
-                        ],
                       ),
                     ],
                   ),
-                ),
-              ],
+                );
+              },
             ),
-          );
-        },
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: _navy),
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  onPressed: printing ? null : () => _printReceipt(order),
+                  icon: const Icon(Icons.receipt_long, size: 14, color: _navy),
+                  label: const Text('Nota', style: TextStyle(fontSize: 11, color: _navy, fontWeight: FontWeight.bold)),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    side: const BorderSide(color: _cyan),
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  onPressed: printing ? null : () => _printKitchenTicket(order),
+                  icon: const Icon(Icons.soup_kitchen, size: 14, color: _cyan),
+                  label: const Text('Dapur', style: TextStyle(fontSize: 11, color: _cyan, fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          if (status != 'completed')
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _statusColor(status),
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  elevation: 0,
+                ),
+                onPressed: busy ? null : () => _advanceStatus(order),
+                child: busy
+                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    : Text(
+                        status == 'ready' ? 'Selesaikan' : 'Proses ->',
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12),
+                      ),
+              ),
+            ),
+        ],
       ),
     );
   }

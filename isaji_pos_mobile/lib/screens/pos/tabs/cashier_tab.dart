@@ -4,6 +4,7 @@ import 'package:responsive_builder/responsive_builder.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/intl.dart';
 import '../../../utils/printer_helper.dart';
+import '../../../services/printer_service.dart';
 
 class CartItem {
   final String menuId;
@@ -39,6 +40,9 @@ class _CashierTabState extends State<CashierTab> {
   String _branchId = '';
   String _empName = 'Kasir';
   String _orderType = 'Dine In';
+  String _storeName = 'ISAJI POS';
+  String? _storeAddress;
+  String? _storePhone;
 
   final NumberFormat _currencyFormat = NumberFormat.currency(
     locale: 'id_ID',
@@ -58,7 +62,27 @@ class _CashierTabState extends State<CashierTab> {
       _branchId = prefs.getString('branch_id') ?? '';
       _empName = prefs.getString('emp_name') ?? 'Kasir';
     });
-    await _fetchMenus();
+    await Future.wait([_fetchMenus(), _fetchBranchInfo()]);
+  }
+
+  Future<void> _fetchBranchInfo() async {
+    if (_branchId.isEmpty) return;
+    try {
+      final branch = await supabase
+          .from('branches')
+          .select('name, address, phone')
+          .eq('id', _branchId)
+          .maybeSingle();
+      if (branch != null && mounted) {
+        setState(() {
+          _storeName = branch['name']?.toString() ?? _storeName;
+          _storeAddress = branch['address']?.toString();
+          _storePhone = branch['phone']?.toString();
+        });
+      }
+    } catch (e) {
+      debugPrint('Gagal ambil info cabang: $e');
+    }
   }
 
   Future<void> _fetchMenus() async {
@@ -87,9 +111,9 @@ class _CashierTabState extends State<CashierTab> {
   void _addToCart(Map<String, dynamic> menu) {
     setState(() {
       final index = _cart.indexWhere((item) => item.menuId == menu['id']);
-      if (index >= 0)
+      if (index >= 0) {
         _cart[index].qty++;
-      else
+      } else {
         _cart.add(
           CartItem(
             menuId: menu['id'],
@@ -97,6 +121,7 @@ class _CashierTabState extends State<CashierTab> {
             price: (menu['price'] as num).toDouble(),
           ),
         );
+      }
     });
   }
 
@@ -111,10 +136,47 @@ class _CashierTabState extends State<CashierTab> {
   double get _tax => _subtotal * 0.10;
   double get _grandTotal => _subtotal + _tax;
 
+  /// Validasi stok terkini ke server sebelum transaksi diproses, supaya
+  /// tidak terjadi over-sell jika stok sudah berubah sejak menu dimuat
+  /// (misal karena transaksi lain / kasir lain).
+  Future<String?> _validateStockBeforeCheckout() async {
+    if (_cart.isEmpty) return 'Keranjang masih kosong.';
+    try {
+      final ids = _cart.map((e) => e.menuId).toList();
+      final res = await supabase
+          .from('menus')
+          .select('id, name, stock')
+          .inFilter('id', ids);
+      final latest = {
+        for (var m in res) m['id']: (m['stock'] as num?)?.toInt() ?? 0,
+      };
+      for (final item in _cart) {
+        final stock = latest[item.menuId];
+        if (stock == null) return '${item.name} tidak ditemukan di menu.';
+        if (stock < item.qty) {
+          return 'Stok ${item.name} tersisa $stock, tapi pesanan ${item.qty}.';
+        }
+      }
+      return null;
+    } catch (e) {
+      return 'Gagal memvalidasi stok: $e';
+    }
+  }
+
   Future<void> _processTransaction(
     String paymentMethod,
     double amountTendered,
   ) async {
+    final stockError = await _validateStockBeforeCheckout();
+    if (stockError != null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(stockError), backgroundColor: Colors.red),
+      );
+      return;
+    }
+
+    if (!mounted) return;
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -171,7 +233,9 @@ class _CashierTabState extends State<CashierTab> {
               .from('menus')
               .update({'stock': currentStock - item.qty})
               .eq('id', item.menuId);
-        } catch (e) {}
+        } catch (e) {
+          debugPrint('Gagal update stok: $e');
+        }
       }
 
       await supabase.from('payments').insert({
@@ -189,23 +253,43 @@ class _CashierTabState extends State<CashierTab> {
           ? amountTendered - _grandTotal
           : 0.0;
 
-      try {
-        await PrinterHelper.printReceipt(
-          orderNumber: orderNumber,
-          cashierName: _empName,
-          cart: _cart,
-          subtotal: _subtotal,
-          tax: _tax,
-          grandTotal: _grandTotal,
-          amountTendered: paymentMethod == 'cash'
-              ? amountTendered
-              : _grandTotal,
-          change: change,
-          paymentMethod: paymentMethod,
-        );
-      } catch (e) {}
+      final receiptData = ReceiptData(
+        storeName: _storeName,
+        storeAddress: _storeAddress,
+        storePhone: _storePhone,
+        orderNumber: orderNumber,
+        cashierName: _empName,
+        orderType: _orderType,
+        dateTime: timestamp,
+        items: _cart
+            .map(
+              (e) => ReceiptLineItem(
+                name: e.name,
+                qty: e.qty,
+                price: e.price,
+                subtotal: e.subtotal,
+              ),
+            )
+            .toList(),
+        subtotal: _subtotal,
+        tax: _tax,
+        grandTotal: _grandTotal,
+        paymentMethod: paymentMethod,
+        amountTendered: paymentMethod == 'cash' ? amountTendered : _grandTotal,
+        change: change,
+      );
 
-      _showSuccessDialog(orderNumber, change);
+      // Cetak otomatis ke semua printer nota & tiket dapur yang terpasang.
+      // Kegagalan cetak tidak membatalkan transaksi (nota tetap bisa
+      // dicetak ulang kapan saja lewat Riwayat / Pesanan Aktif).
+      try {
+        await PrinterService.printReceiptToAllAssigned(receiptData);
+        await PrinterService.printKitchenTicketToAllAssigned(receiptData);
+      } catch (e) {
+        debugPrint('Gagal mencetak otomatis: $e');
+      }
+
+      _showSuccessDialog(orderNumber, change, receiptData);
       _fetchMenus();
     } catch (e) {
       if (!mounted) return;
@@ -213,6 +297,66 @@ class _CashierTabState extends State<CashierTab> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Gagal Transaksi: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  /// Mencetak "Bill" sementara (belum bayar) — berguna saat pelanggan
+  /// ingin melihat rincian pesanan dulu sebelum benar-benar membayar.
+  Future<void> _printPreBill() async {
+    final now = DateTime.now();
+    final data = ReceiptData(
+      storeName: _storeName,
+      storeAddress: _storeAddress,
+      storePhone: _storePhone,
+      orderNumber: 'BILL-SEMENTARA',
+      cashierName: _empName,
+      orderType: _orderType,
+      dateTime: now,
+      items: _cart
+          .map(
+            (e) => ReceiptLineItem(
+              name: e.name,
+              qty: e.qty,
+              price: e.price,
+              subtotal: e.subtotal,
+            ),
+          )
+          .toList(),
+      subtotal: _subtotal,
+      tax: _tax,
+      grandTotal: _grandTotal,
+      paymentMethod: 'BELUM BAYAR',
+      amountTendered: 0,
+      change: 0,
+      footerNote: 'Ini bukan struk pembayaran resmi',
+    );
+    try {
+      final results = await PrinterService.printReceiptToAllAssigned(data);
+      if (!mounted) return;
+      if (results.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Belum ada printer nota terpasang. Atur di menu Setting.',
+            ),
+          ),
+        );
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Bill berhasil dicetak.'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Gagal mencetak: $e'),
           backgroundColor: Colors.red,
         ),
       );
@@ -405,7 +549,47 @@ class _CashierTabState extends State<CashierTab> {
     );
   }
 
-  void _showSuccessDialog(String orderNumber, double change) {
+  Future<void> _manualReprint(ReceiptData data) async {
+    try {
+      final results = await PrinterService.printReceiptToAllAssigned(data);
+      if (!mounted) return;
+      if (results.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Belum ada printer nota terpasang. Atur di menu Setting.',
+            ),
+          ),
+        );
+        return;
+      }
+      final failed = results.where((r) => !r.success).toList();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            failed.isEmpty
+                ? 'Nota berhasil dicetak ulang.'
+                : 'Sebagian printer gagal: ${failed.map((f) => f.printer.name).join(', ')}',
+          ),
+          backgroundColor: failed.isEmpty ? Colors.green : Colors.orange,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Gagal mencetak: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  void _showSuccessDialog(
+    String orderNumber,
+    double change,
+    ReceiptData receiptData,
+  ) {
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -465,8 +649,30 @@ class _CashierTabState extends State<CashierTab> {
             ],
           ],
         ),
-        actionsPadding: const EdgeInsets.all(24),
+        actionsPadding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
         actions: [
+          SizedBox(
+            width: double.infinity,
+            height: 48,
+            child: OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                side: const BorderSide(color: Color(0xFF0F2040)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+              ),
+              onPressed: () => _manualReprint(receiptData),
+              icon: const Icon(Icons.print, color: Color(0xFF0F2040), size: 18),
+              label: const Text(
+                'Cetak Ulang Nota',
+                style: TextStyle(
+                  color: Color(0xFF0F2040),
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
           SizedBox(
             width: double.infinity,
             height: 54,
@@ -1207,7 +1413,7 @@ class _CashierTabState extends State<CashierTab> {
                   Row(
                     children: [
                       Expanded(
-                        child: OutlinedButton(
+                        child: OutlinedButton.icon(
                           style: OutlinedButton.styleFrom(
                             padding: const EdgeInsets.symmetric(vertical: 14),
                             side: const BorderSide(color: Color(0xFF00B4D8)),
@@ -1215,9 +1421,14 @@ class _CashierTabState extends State<CashierTab> {
                               borderRadius: BorderRadius.circular(10),
                             ),
                           ),
-                          onPressed: () {},
-                          child: const Text(
-                            'Simpan Bill',
+                          onPressed: _cart.isEmpty ? null : _printPreBill,
+                          icon: const Icon(
+                            Icons.print,
+                            size: 16,
+                            color: Color(0xFF00B4D8),
+                          ),
+                          label: const Text(
+                            'Cetak Bill',
                             style: TextStyle(
                               color: Color(0xFF00B4D8),
                               fontWeight: FontWeight.w800,

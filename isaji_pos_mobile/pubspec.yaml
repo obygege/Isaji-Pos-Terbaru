@@ -21,6 +21,12 @@ dependencies:
   print_bluetooth_thermal: ^1.2.1
   esc_pos_utils_plus: ^2.0.4
   intl: ^0.20.3
+  uuid: ^4.5.1
+  # Menangani koneksi & cetak ke printer USB (Android). Dipilih karena
+  # masih aktif dirawat (beda dengan flutter_usb_printer yang sudah
+  # tidak diupdate sejak 2022 dan berisiko gagal build di Gradle/AGP
+  # modern bawaan Flutter versi baru).
+  flutter_pos_printer_platform_image_3_sdt: ^1.2.24
 
 dev_dependencies:
   flutter_test:

@@ -106,10 +106,11 @@ class _DashboardTabState extends State<DashboardTab> {
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading)
+    if (_isLoading) {
       return const Center(
         child: CircularProgressIndicator(color: Color(0xFF00B4D8)),
       );
+    }
 
     return Scaffold(
       backgroundColor: const Color(0xFFF4F7FE),
