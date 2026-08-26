@@ -5,6 +5,7 @@ import SuperAdminHeader from './components/SuperAdminHeader';
 // Import Semua Komponen Tab
 import OverviewTab from './tabs/OverviewTab';
 import TenantsTab from './tabs/TenantsTab';
+import OwnersTab from './tabs/OwnersTab';
 import FinanceTab from './tabs/FinanceTab';
 import MonitoringTab from './tabs/MonitoringTab';
 import SecurityTab from './tabs/SecurityTab';
@@ -42,6 +43,7 @@ function SuperAdminDashboard() {
         switch (activeMenu) {
             case 'overview': return <OverviewTab />;
             case 'tenants': return <TenantsTab searchQuery={searchQuery} />;
+            case 'owners': return <OwnersTab searchQuery={searchQuery} />;
             case 'finance': return <FinanceTab />;
             case 'database': return <DatabaseTab />;
             case 'monitoring': return <MonitoringTab />;

@@ -1,12 +1,19 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import supabase from '../../../backend/lib/supabaseClient';
+import { TABLE_SCHEMA } from '../dataSchema';
+import CrudFormModal from '../components/CrudFormModal';
 
 export default function TenantsTab({ searchQuery }) {
     const [orgs, setOrgs] = useState([]);
     const [loading, setLoading] = useState(true);
     const [showModal, setShowModal] = useState(false);
+    const [editModalRow, setEditModalRow] = useState(null); // baris organisasi yang sedang diedit lengkap (semua kolom)
+    const [saving, setSaving] = useState(false);
+    const [busyId, setBusyId] = useState(null);
 
-    // State Form
+    const orgColumns = TABLE_SCHEMA['organizations'] || [];
+
+    // State Form (form cepat untuk tambah tenant baru)
     const [formData, setFormData] = useState({ name: '', subdomain: '', owner_id: '' });
 
     const fetchTenants = useCallback(async () => {
@@ -27,9 +34,37 @@ export default function TenantsTab({ searchQuery }) {
 
     const toggleTenantStatus = async (id, currentStatus) => {
         if (window.confirm(`Yakin ingin ${currentStatus ? 'Nonaktifkan' : 'Aktifkan'} tenant ini?`)) {
+            setBusyId(id);
             await supabase.from('organizations').update({ is_active: !currentStatus }).eq('id', id);
             fetchTenants();
+            setBusyId(null);
         }
+    };
+
+    const handleDeleteTenant = async (org) => {
+        if (!window.confirm(`Yakin ingin menghapus tenant "${org.name}" secara permanen? Semua data terkait (cabang, karyawan, dll) bisa terpengaruh. Tindakan ini tidak bisa dibatalkan.`)) return;
+        setBusyId(org.id);
+        try {
+            const { error } = await supabase.from('organizations').delete().eq('id', org.id);
+            if (error) throw error;
+            fetchTenants();
+        } catch (err) {
+            alert('Gagal menghapus tenant: ' + (err.message || 'unknown error'));
+        }
+        setBusyId(null);
+    };
+
+    const handleEditSave = async (payload) => {
+        setSaving(true);
+        try {
+            const { error } = await supabase.from('organizations').update(payload).eq('id', editModalRow.id);
+            if (error) throw error;
+            setEditModalRow(null);
+            fetchTenants();
+        } catch (err) {
+            alert('Gagal menyimpan perubahan: ' + (err.message || 'unknown error'));
+        }
+        setSaving(false);
     };
 
     const handleCreateTenant = async (e) => {
@@ -103,9 +138,15 @@ export default function TenantsTab({ searchQuery }) {
                                             <span className="flex items-center gap-1.5 text-xs font-bold text-red-600"><div className="w-1.5 h-1.5 rounded-full bg-red-500"></div> Nonaktif</span>
                                         }
                                     </td>
-                                    <td className="p-4 text-right space-x-2">
-                                        <button onClick={() => toggleTenantStatus(org.id, org.is_active)} className="text-[10px] font-bold px-3 py-1.5 border border-gray-200 rounded-md hover:bg-gray-100">
+                                    <td className="p-4 text-right space-x-2 whitespace-nowrap">
+                                        <button onClick={() => toggleTenantStatus(org.id, org.is_active)} disabled={busyId === org.id} className="text-[10px] font-bold px-3 py-1.5 border border-gray-200 rounded-md hover:bg-gray-100 disabled:opacity-40">
                                             {org.is_active ? 'Nonaktifkan' : 'Aktifkan'}
+                                        </button>
+                                        <button onClick={() => setEditModalRow(org)} className="text-[10px] font-bold px-3 py-1.5 border border-blue-200 text-blue-600 rounded-md hover:bg-blue-50">
+                                            Edit
+                                        </button>
+                                        <button onClick={() => handleDeleteTenant(org)} disabled={busyId === org.id} className="text-[10px] font-bold px-3 py-1.5 border border-red-200 text-red-600 rounded-md hover:bg-red-50 disabled:opacity-40">
+                                            Hapus
                                         </button>
                                     </td>
                                 </tr>
@@ -146,6 +187,18 @@ export default function TenantsTab({ searchQuery }) {
                         </form>
                     </div>
                 </div>
+            )}
+
+            {/* MODAL EDIT TENANT (semua kolom, termasuk plan, subscription, dsb) */}
+            {editModalRow && (
+                <CrudFormModal
+                    tableName="organizations (tenant)"
+                    columns={orgColumns}
+                    initialData={editModalRow}
+                    saving={saving}
+                    onClose={() => setEditModalRow(null)}
+                    onSave={handleEditSave}
+                />
             )}
         </div>
     );

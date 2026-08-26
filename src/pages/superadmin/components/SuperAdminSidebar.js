@@ -12,6 +12,7 @@ function SuperAdminSidebar({ activeMenu, setActiveMenu }) {
     const menus = [
         { id: 'overview', icon: 'M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z', label: 'Dasbor' },
         { id: 'tenants', icon: 'M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z', label: 'Manajemen Tenant' },
+        { id: 'owners', icon: 'M12 4.5a3.5 3.5 0 100 7 3.5 3.5 0 000-7zM4 20a8 8 0 0116 0M17 8a2.5 2.5 0 110 5M20 20a5.5 5.5 0 00-3-4.9', label: 'Owner & Karyawan' },
         { id: 'finance', icon: 'M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z', label: 'Keuangan SaaS' },
         { id: 'database', icon: 'M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4', label: 'Jelajah Database' },
         { id: 'monitoring', icon: 'M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01', label: 'Monitoring Database' },
@@ -39,8 +40,8 @@ function SuperAdminSidebar({ activeMenu, setActiveMenu }) {
                             key={menu.id}
                             onClick={() => setActiveMenu(menu.id)}
                             className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold transition-all ${activeMenu === menu.id
-                                    ? 'bg-orange-50 text-isaji-orange'
-                                    : 'text-gray-500 hover:text-gray-900 hover:bg-gray-50'
+                                ? 'bg-orange-50 text-isaji-orange'
+                                : 'text-gray-500 hover:text-gray-900 hover:bg-gray-50'
                                 }`}
                         >
                             <Icon path={menu.icon} />

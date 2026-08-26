@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import supabase from './backend/lib/supabaseClient';
 import { detectUserRole } from './backend/lib/roleDetection';
 import { createOrganizationForUser } from './backend/lib/orgSignup';
@@ -41,6 +41,14 @@ function App() {
   });
   const [authError, setAuthError] = useState(null);
 
+  // PERBAIKAN: kunci anti-dobel-eksekusi. supabase.auth.getSession() saat mount
+  // DAN supabase.auth.onAuthStateChange('SIGNED_IN') bisa sama-sama terpicu untuk
+  // sesi yang SAMA persis setelah redirect Google selesai. Tanpa kunci ini,
+  // panggilan kedua bisa "menabrak" panggilan pertama yang masih proses membuat
+  // organization (async, belum commit ke DB) -> dianggap bukan owner -> auto sign-out
+  // dengan pesan "Akun Google ini belum terdaftar sebagai Owner..." padahal datanya benar.
+  const isProcessingAuthRef = useRef(false);
+
   // Simpan halaman terakhir ke LocalStorage (Hanya untuk Dashboard/Owner)
   useEffect(() => {
     // Jangan simpan state jika sedang di halaman Pelanggan atau Super Admin
@@ -72,7 +80,18 @@ function App() {
   }, [activePage, isSelfOrderRoute, isCustomerLoginRoute, isCustomerRegisterRoute, isAttendanceKioskRoute, isSuperAdminLoginRoute, isSuperAdminDashboardRoute]);
 
   // Fungsi pintar untuk mendeteksi apakah user adalah Owner atau Manajer
+  // PERBAIKAN: dibungkus kunci isProcessingAuthRef supaya tidak bisa jalan dobel bersamaan.
   const determineUserRoleAndNavigate = async (userId) => {
+    if (isProcessingAuthRef.current) return; // sudah ada proses lain yang jalan, abaikan
+    isProcessingAuthRef.current = true;
+    try {
+      await determineUserRoleAndNavigateInner(userId);
+    } finally {
+      isProcessingAuthRef.current = false;
+    }
+  };
+
+  const determineUserRoleAndNavigateInner = async (userId) => {
     // Kalau ini baru saja daftar lewat tombol Google di halaman Register,
     // nama organisasinya dititip di sessionStorage sebelum redirect ke Google
     // (form React reset total setelah balik dari redirect). Bikin org-nya di sini.
