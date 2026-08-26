@@ -9,6 +9,7 @@ function SubscriptionPlan({ user, orgData, isOptional, onClose }) {
     const [companyName, setCompanyName] = useState(orgData?.name || '');
     const [plans, setPlans] = useState([]);
     const [plansLoading, setPlansLoading] = useState(true);
+    const [plansError, setPlansError] = useState(null);
 
     const isTrialBlocked = orgData?.subscription_status === 'expired' || orgData?.trial_ends_at;
 
@@ -39,6 +40,7 @@ function SubscriptionPlan({ user, orgData, isOptional, onClose }) {
     useEffect(() => {
         const fetchPlans = async () => {
             setPlansLoading(true);
+            setPlansError(null);
             const { data, error } = await supabase
                 .from('subscription_plans')
                 .select('*')
@@ -47,8 +49,11 @@ function SubscriptionPlan({ user, orgData, isOptional, onClose }) {
 
             if (error) {
                 console.error('Gagal memuat paket langganan:', error.message);
+                setPlansError(error.message || 'Gagal memuat paket langganan.');
+            } else if (!data || data.length === 0) {
+                setPlansError('Belum ada paket langganan yang tersedia. Silakan hubungi admin.');
             } else {
-                setPlans(data || []);
+                setPlans(data);
             }
             setPlansLoading(false);
         };
@@ -216,6 +221,14 @@ function SubscriptionPlan({ user, orgData, isOptional, onClose }) {
 
                     {plansLoading ? (
                         <div className="py-16 text-gray-400 font-medium">Memuat paket langganan...</div>
+                    ) : plansError ? (
+                        <div className="py-16 text-center max-w-md">
+                            <p className="text-red-500 font-semibold mb-2">{plansError}</p>
+                            <p className="text-gray-400 text-sm">
+                                Jika Anda pemilik aplikasi, periksa tabel <code>subscription_plans</code> di Supabase
+                                (pastikan ada baris dengan <code>is_active = true</code> dan RLS mengizinkan SELECT).
+                            </p>
+                        </div>
                     ) : (
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 w-full mb-6">
                             {plans.map((plan) => (
