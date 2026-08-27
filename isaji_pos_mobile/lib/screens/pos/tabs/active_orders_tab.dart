@@ -82,13 +82,46 @@ class _ActiveOrdersTabState extends State<ActiveOrdersTab> {
       final res = await supabase
           .from('orders')
           .select(
-            '*, tables(name), order_items(id, product_id, qty, unit_price, subtotal, notes, products(name))',
+            '*, tables(name), order_items(id, product_id, qty, unit_price, subtotal, notes)',
           )
           .eq('branch_id', _branchId)
           .inFilter('status', _activeStatuses)
           .order('created_at', ascending: true);
 
-      setState(() => _orders = List<Map<String, dynamic>>.from(res));
+      final orders = List<Map<String, dynamic>>.from(res);
+
+      // Katalog item disimpan di tabel `menus` (bukan `products`), jadi
+      // nama item diambil manual dari situ berdasarkan product_id di order_items.
+      final ids = <String>{};
+      for (final o in orders) {
+        for (final it in List<Map<String, dynamic>>.from(
+          o['order_items'] ?? [],
+        )) {
+          final pid = it['product_id']?.toString();
+          if (pid != null && pid.isNotEmpty) ids.add(pid);
+        }
+      }
+      Map<String, String> nameById = {};
+      if (ids.isNotEmpty) {
+        final menuRes = await supabase
+            .from('menus')
+            .select('id, name')
+            .inFilter('id', ids.toList());
+        nameById = {
+          for (final m in menuRes) m['id'].toString(): m['name'].toString(),
+        };
+      }
+      for (final o in orders) {
+        for (final it in List<Map<String, dynamic>>.from(
+          o['order_items'] ?? [],
+        )) {
+          it['products'] = {
+            'name': nameById[it['product_id']?.toString()] ?? 'Item',
+          };
+        }
+      }
+
+      setState(() => _orders = orders);
     } catch (e) {
       setState(() => _errorMsg = 'Gagal memuat pesanan aktif: $e');
     } finally {

@@ -59,7 +59,7 @@ class _ValidationTabState extends State<ValidationTab> {
       final res = await supabase
           .from('payment_verifications')
           .select(
-            '*, orders(id, order_number, customer_name, customer_phone, total_amount, table_id, tables(name))',
+            '*, orders!payment_verifications_order_id_fkey(id, order_number, customer_name, customer_phone, total_amount, table_id, tables(name))',
           )
           .eq('branch_id', _branchId)
           .eq('status', 'pending')
@@ -716,12 +716,17 @@ class _ValidationTabState extends State<ValidationTab> {
                                       ),
                                       Expanded(
                                         child: Padding(
-                                          padding: const EdgeInsets.all(16.0),
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 14.0,
+                                            vertical: 10.0,
+                                          ),
                                           child: Column(
+                                            mainAxisSize: MainAxisSize.min,
                                             crossAxisAlignment:
                                                 CrossAxisAlignment.start,
                                             mainAxisAlignment:
-                                                MainAxisAlignment.center,
+                                                MainAxisAlignment
+                                                    .spaceBetween,
                                             children: [
                                               Row(
                                                 mainAxisAlignment:
@@ -747,32 +752,38 @@ class _ValidationTabState extends State<ValidationTab> {
                                                   ),
                                                 ],
                                               ),
-                                              const SizedBox(height: 4),
+                                              const SizedBox(height: 2),
                                               Text(
                                                 customerName,
                                                 maxLines: 1,
                                                 overflow: TextOverflow.ellipsis,
                                                 style: const TextStyle(
                                                   fontWeight: FontWeight.w800,
-                                                  fontSize: 16,
+                                                  fontSize: 15,
                                                   color: Color(0xFF0F2040),
                                                 ),
                                               ),
-                                              const Spacer(),
+                                              const SizedBox(height: 2),
                                               Row(
                                                 mainAxisAlignment:
                                                     MainAxisAlignment
                                                         .spaceBetween,
                                                 children: [
-                                                  Text(
-                                                    '${tableName != null ? 'Meja $tableName • ' : ''}$method',
-                                                    style: const TextStyle(
-                                                      color: Colors.grey,
-                                                      fontWeight:
-                                                          FontWeight.w600,
-                                                      fontSize: 13,
+                                                  Flexible(
+                                                    child: Text(
+                                                      '${tableName != null ? 'Meja $tableName • ' : ''}$method',
+                                                      maxLines: 1,
+                                                      overflow:
+                                                          TextOverflow.ellipsis,
+                                                      style: const TextStyle(
+                                                        color: Colors.grey,
+                                                        fontWeight:
+                                                            FontWeight.w600,
+                                                        fontSize: 12,
+                                                      ),
                                                     ),
                                                   ),
+                                                  const SizedBox(width: 4),
                                                   Text(
                                                     _currencyFormat.format(
                                                       amount,

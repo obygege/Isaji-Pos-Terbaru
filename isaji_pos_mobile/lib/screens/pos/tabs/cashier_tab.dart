@@ -985,9 +985,13 @@ class _CashierTabState extends State<CashierTab> {
                                             imageUrl,
                                             fit: BoxFit.cover,
                                             errorBuilder: (ctx, err, stack) =>
-                                                _buildPlaceholderImage(),
+                                                _buildPlaceholderImage(
+                                                  menu['name'] ?? '',
+                                                ),
                                           )
-                                        : _buildPlaceholderImage(),
+                                        : _buildPlaceholderImage(
+                                            menu['name'] ?? '',
+                                          ),
                                   ),
                                 ),
                                 if (isOutOfStock)
@@ -1148,14 +1152,47 @@ class _CashierTabState extends State<CashierTab> {
     );
   }
 
-  Widget _buildPlaceholderImage() {
+  Widget _buildPlaceholderImage(String menuName) {
+    final String initial = menuName.trim().isNotEmpty
+        ? menuName.trim()[0].toUpperCase()
+        : '?';
+
+    // Palet warna biar tiap menu keliatan beda walau sama-sama placeholder
+    const List<List<Color>> palettes = [
+      [Color(0xFF00B4D8), Color(0xFFE0F7FB)],
+      [Color(0xFFFF9800), Color(0xFFFFF3E0)],
+      [Color(0xFF16A34A), Color(0xFFE8F7EE)],
+      [Color(0xFFE91E63), Color(0xFFFCE4EC)],
+      [Color(0xFF7C4DFF), Color(0xFFEDE7F6)],
+      [Color(0xFFFF5252), Color(0xFFFFEBEE)],
+    ];
+    final palette = palettes[menuName.codeUnits.fold<int>(
+          0,
+          (sum, c) => sum + c,
+        ) %
+        palettes.length];
+
     return Container(
-      color: Colors.grey.shade100,
+      color: palette[1],
       child: Center(
-        child: Icon(
-          Icons.restaurant_menu,
-          color: Colors.grey.shade300,
-          size: 32,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              initial,
+              style: TextStyle(
+                color: palette[0],
+                fontWeight: FontWeight.w900,
+                fontSize: 32,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Icon(
+              Icons.restaurant_menu,
+              color: palette[0].withValues(alpha: 0.6),
+              size: 16,
+            ),
+          ],
         ),
       ),
     );
