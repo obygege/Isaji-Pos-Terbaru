@@ -1,9 +1,12 @@
 import React, { useState } from 'react';
 
+const ATTENDANCE_SUBMENUS = ['attendance', 'shift', 'holiday_schedule', 'leave_requests', 'attendance_rules'];
+
 function Sidebar({ activeMenu, setActiveMenu }) {
     const [isInventoryOpen, setIsInventoryOpen] = useState(
         activeMenu === 'inventory' || activeMenu === 'stock_in' || activeMenu === 'stock_out'
     );
+    const [isAttendanceOpen, setIsAttendanceOpen] = useState(ATTENDANCE_SUBMENUS.includes(activeMenu));
 
     const MenuItem = ({ id, label, icon }) => {
         const isActive = activeMenu === id;
@@ -133,11 +136,34 @@ function Sidebar({ activeMenu, setActiveMenu }) {
                         label="Data Karyawan"
                         icon={<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V8a2 2 0 00-2-2h-5m-4 0V5a2 2 0 114 0v1m-4 0a2 2 0 104 0m-5 8a2 2 0 100-4 2 2 0 000 4zm0 0c1.306 0 2.417.835 2.83 2M9 14a3.001 3.001 0 00-2.83 2M15 11h3m-3 4h2"></path></svg>}
                     />
-                    <MenuItem
-                        id="attendance"
-                        label="Absensi Karyawan"
-                        icon={<svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>}
-                    />
+                    {/* DROPDOWN ABSENSI KARYAWAN */}
+                    <div className="space-y-1">
+                        <button
+                            onClick={() => setIsAttendanceOpen(!isAttendanceOpen)}
+                            className={`w-full flex items-center justify-between px-4 py-3 rounded-lg transition-all duration-200 text-sm font-bold ${ATTENDANCE_SUBMENUS.includes(activeMenu)
+                                ? 'bg-isaji-navy/10 text-isaji-navy'
+                                : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900'
+                                }`}
+                        >
+                            <div className="flex items-center gap-3">
+                                <span className={ATTENDANCE_SUBMENUS.includes(activeMenu) ? 'text-isaji-orange' : 'text-gray-400'}>
+                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                </span>
+                                <span>Absensi Karyawan</span>
+                            </div>
+                            <svg className={`w-4 h-4 transition-transform ${isAttendanceOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+                        </button>
+
+                        {isAttendanceOpen && (
+                            <div className="pl-6 space-y-1 border-l-2 border-gray-100 ml-4 my-1">
+                                <button onClick={() => setActiveMenu('attendance')} className={`w-full text-left px-3 py-2 rounded-md text-xs font-bold transition-colors ${activeMenu === 'attendance' ? 'text-isaji-orange bg-orange-50/50' : 'text-gray-500 hover:text-gray-900'}`}>• Rekap Absensi</button>
+                                <button onClick={() => setActiveMenu('shift')} className={`w-full text-left px-3 py-2 rounded-md text-xs font-bold transition-colors ${activeMenu === 'shift' ? 'text-isaji-orange bg-orange-50/50' : 'text-gray-500 hover:text-gray-900'}`}>• Atur Shift / Jam Kerja</button>
+                                <button onClick={() => setActiveMenu('holiday_schedule')} className={`w-full text-left px-3 py-2 rounded-md text-xs font-bold transition-colors ${activeMenu === 'holiday_schedule' ? 'text-isaji-orange bg-orange-50/50' : 'text-gray-500 hover:text-gray-900'}`}>• Hari Libur & Jadwal</button>
+                                <button onClick={() => setActiveMenu('leave_requests')} className={`w-full text-left px-3 py-2 rounded-md text-xs font-bold transition-colors ${activeMenu === 'leave_requests' ? 'text-isaji-orange bg-orange-50/50' : 'text-gray-500 hover:text-gray-900'}`}>• Pengajuan Izin/Cuti/Sakit</button>
+                                <button onClick={() => setActiveMenu('attendance_rules')} className={`w-full text-left px-3 py-2 rounded-md text-xs font-bold transition-colors ${activeMenu === 'attendance_rules' ? 'text-isaji-orange bg-orange-50/50' : 'text-gray-500 hover:text-gray-900'}`}>• Aturan Telat & Potongan Gaji</button>
+                            </div>
+                        )}
+                    </div>
                 </div>
             </div>
         </aside>

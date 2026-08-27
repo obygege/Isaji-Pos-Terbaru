@@ -64,6 +64,32 @@ function SelfOrderPage() {
     const [isUploadingProof, setIsUploadingProof] = useState(false);
     const [proofError, setProofError] = useState(null);
 
+    // ===== RIWAYAT PESANAN & PESANAN SEDANG BERLANGSUNG =====
+    // Dilacak pakai nomor HP (tersimpan di device ini), jalan baik buat guest maupun member yang login.
+    const [myOrders, setMyOrders] = useState([]);
+    const [isLoadingMyOrders, setIsLoadingMyOrders] = useState(false);
+    const [myOrdersFilter, setMyOrdersFilter] = useState('ongoing'); // ongoing | history
+    const ONGOING_STATUSES = ['awaiting_payment', 'pending', 'preparing', 'ready'];
+
+    const trackedPhone = customerProfile?.phone || (typeof window !== 'undefined' ? localStorage.getItem('isaji_customer_phone') : null);
+
+    const fetchMyOrders = useCallback(async () => {
+        if (!trackedPhone || !branchId) return;
+        setIsLoadingMyOrders(true);
+        const { data, error } = await supabase
+            .from('orders')
+            .select('id, order_number, status, payment_status, total_amount, created_at, order_items(id, qty, unit_price, products(name))')
+            .eq('branch_id', branchId) // wajib: gak boleh kebawa pesanan cabang lain
+            .eq('customer_phone', trackedPhone)
+            .order('created_at', { ascending: false })
+            .limit(50);
+        if (!error) setMyOrders(data || []);
+        setIsLoadingMyOrders(false);
+    }, [trackedPhone, branchId]);
+
+    const ongoingOrders = myOrders.filter((o) => ONGOING_STATUSES.includes(o.status));
+    const historyOrders = myOrders.filter((o) => !ONGOING_STATUSES.includes(o.status));
+
     // 1. MEMINTA IZIN LOKASI SAAT HALAMAN DIBUKA
     useEffect(() => {
         if (window.isSecureContext === false && window.location.hostname !== 'localhost') {
@@ -315,6 +341,8 @@ function SelfOrderPage() {
             setCart({});
             setActiveOrder(newOrder);
             localStorage.setItem(`isaji_active_order_${tableInfo.id}`, JSON.stringify(resultPayload));
+            // simpan nomor HP di device ini biar bisa lacak "Pesanan Saya" / riwayat tanpa harus login
+            localStorage.setItem('isaji_customer_phone', customerPhone);
 
             if (needsProof) {
                 setActiveTab('payment_proof');
@@ -508,6 +536,10 @@ function SelfOrderPage() {
         } catch (e) { /* localStorage rusak, abaikan */ }
     }, [tableInfo?.id]);
 
+    // Ambil status pesanan tiap kali tab "Pesanan Saya" dibuka, dan sekali di awal buat badge notifikasi
+    useEffect(() => { if (trackedPhone && branchId) fetchMyOrders(); }, [trackedPhone, branchId, fetchMyOrders]);
+    useEffect(() => { if (activeTab === 'my_orders') fetchMyOrders(); }, [activeTab, fetchMyOrders]);
+
     if (isLoading) return <div className="min-h-screen flex items-center justify-center bg-gray-50"><div className="animate-spin w-8 h-8 border-4 border-isaji-orange border-t-transparent rounded-full"></div></div>;
     if (errorMsg) return <div className="min-h-screen flex flex-col items-center justify-center bg-red-50 p-6 text-center"><h2 className="text-lg font-black text-red-600 mb-1">Akses Ditolak</h2><p className="text-sm text-gray-700">{errorMsg}</p></div>;
 
@@ -519,6 +551,37 @@ function SelfOrderPage() {
                 {activeTab === 'menu' && (
                     <div className="animate-fade-in">
                         <div className="px-5 pt-4">
+                            {trackedPhone && (
+                                <button
+                                    onClick={() => setActiveTab('my_orders')}
+                                    className="w-full mb-4 flex items-center justify-between px-4 py-3 rounded-2xl bg-white border border-gray-100 shadow-sm active:scale-[0.99] transition-transform"
+                                >
+                                    <div className="flex items-center gap-2">
+                                        <svg className="w-4 h-4 text-isaji-navy" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
+                                        <span className="text-xs font-black text-gray-800">Pesanan Saya</span>
+                                    </div>
+                                    {ongoingOrders.length > 0 ? (
+                                        <span className="text-[10px] font-black bg-isaji-orange text-white px-2 py-1 rounded-full">{ongoingOrders.length} berlangsung</span>
+                                    ) : (
+                                        <svg className="w-4 h-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5l7 7-7 7" /></svg>
+                                    )}
+                                </button>
+                            )}
+                            {!trackedPhone && (
+                                <button
+                                    onClick={() => {
+                                        const phoneInput = window.prompt('Masukkan nomor HP yang dipakai saat pesan sebelumnya:');
+                                        if (phoneInput && phoneInput.trim()) {
+                                            localStorage.setItem('isaji_customer_phone', phoneInput.trim());
+                                            setActiveTab('my_orders');
+                                            window.location.reload(); // refresh biar trackedPhone kebaca ulang
+                                        }
+                                    }}
+                                    className="w-full mb-4 text-center text-[11px] font-bold text-isaji-navy underline underline-offset-2"
+                                >
+                                    Sudah pernah pesan? Cek status pesananmu
+                                </button>
+                            )}
                             {/* Search bar */}
                             <div className="relative mb-4">
                                 <svg className="w-4 h-4 text-gray-400 absolute left-4 top-1/2 -translate-y-1/2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-4.35-4.35M17 11a6 6 0 11-12 0 6 6 0 0112 0z" /></svg>
@@ -619,6 +682,53 @@ function SelfOrderPage() {
                                 })}
                             </div>
                         </div>
+                    </div>
+                )}
+
+                {activeTab === 'my_orders' && (
+                    <div className="animate-fade-in px-5 pt-4">
+                        <h2 className="text-lg font-black text-gray-900 mb-1">Pesanan Saya</h2>
+                        <p className="text-xs text-gray-400 mb-4">Khusus pesanan dari nomor HP <span className="font-bold">{trackedPhone}</span> di cabang ini.</p>
+
+                        <div className="flex gap-2 mb-4">
+                            <button onClick={() => setMyOrdersFilter('ongoing')} className={`flex-1 py-2.5 rounded-xl text-xs font-black ${myOrdersFilter === 'ongoing' ? 'bg-isaji-navy text-white' : 'bg-white border border-gray-100 text-gray-500'}`}>
+                                Sedang Berlangsung {ongoingOrders.length > 0 && `(${ongoingOrders.length})`}
+                            </button>
+                            <button onClick={() => setMyOrdersFilter('history')} className={`flex-1 py-2.5 rounded-xl text-xs font-black ${myOrdersFilter === 'history' ? 'bg-isaji-navy text-white' : 'bg-white border border-gray-100 text-gray-500'}`}>
+                                Riwayat
+                            </button>
+                        </div>
+
+                        {isLoadingMyOrders ? (
+                            <p className="text-center text-xs text-gray-400 py-10">Memuat pesanan...</p>
+                        ) : (myOrdersFilter === 'ongoing' ? ongoingOrders : historyOrders).length === 0 ? (
+                            <p className="text-center text-xs text-gray-400 py-10">
+                                {myOrdersFilter === 'ongoing' ? 'Tidak ada pesanan yang sedang berlangsung.' : 'Belum ada riwayat pesanan.'}
+                            </p>
+                        ) : (
+                            <div className="space-y-3">
+                                {(myOrdersFilter === 'ongoing' ? ongoingOrders : historyOrders).map((o) => (
+                                    <div key={o.id} className="bg-white rounded-2xl p-4 border border-gray-100 shadow-sm">
+                                        <div className="flex justify-between items-start">
+                                            <div>
+                                                <p className="text-sm font-black text-gray-900">{o.order_number}</p>
+                                                <p className="text-[11px] text-gray-400 mt-0.5">{new Date(o.created_at).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' })}</p>
+                                            </div>
+                                            <span className={`text-[10px] font-black uppercase px-2.5 py-1 rounded-full ${o.status === 'cancelled' ? 'bg-red-50 text-red-500' : o.status === 'completed' ? 'bg-green-50 text-green-600' : 'bg-amber-50 text-amber-600'}`}>
+                                                {o.status === 'awaiting_payment' ? 'Menunggu Bayar' : o.status === 'pending' ? 'Diterima' : o.status === 'preparing' ? 'Disiapkan' : o.status === 'ready' ? 'Siap Diambil' : o.status === 'completed' ? 'Selesai' : o.status === 'cancelled' ? 'Dibatalkan' : o.status}
+                                            </span>
+                                        </div>
+                                        <p className="text-xs text-gray-500 mt-2 line-clamp-1">
+                                            {(o.order_items || []).map((it) => `${it.qty}x ${it.products?.name || 'Item'}`).join(', ')}
+                                        </p>
+                                        <div className="flex justify-between items-center mt-2 pt-2 border-t border-gray-50">
+                                            <span className="text-[10px] font-bold text-gray-400 uppercase">{o.payment_status === 'paid' ? 'Sudah Dibayar' : 'Belum Dibayar'}</span>
+                                            <span className="text-sm font-black text-isaji-navy">Rp {Number(o.total_amount || 0).toLocaleString('id-ID')}</span>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                     </div>
                 )}
 

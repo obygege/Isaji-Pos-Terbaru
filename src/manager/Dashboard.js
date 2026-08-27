@@ -8,6 +8,10 @@ import Footer from './Footer';
 // Import Modul Khusus Manajer Cabang
 import EmployeeManager from './EmployeeManager';
 import AttendanceManager from './AttendanceManager';
+import ShiftManager from './ShiftManager';
+import HolidayScheduleManager from './HolidayScheduleManager';
+import LeaveRequestManager from './LeaveRequestManager';
+import AttendanceRulesManager from './AttendanceRulesManager';
 import MenuManager from './MenuManager';
 import InventoryManager from './InventoryManager';
 import StockInManager from './StockInManager';
@@ -166,6 +170,19 @@ function ManagerDashboard({ onNavigate }) {
                 return (
                     <AttendanceManager
                         branchId={branchData?.id}
+                    />
+                );
+            case 'shift':
+                return <ShiftManager branchId={branchData?.id} />;
+            case 'holiday_schedule':
+                return <HolidayScheduleManager branchId={branchData?.id} />;
+            case 'leave_requests':
+                return <LeaveRequestManager branchId={branchData?.id} />;
+            case 'attendance_rules':
+                return (
+                    <AttendanceRulesManager
+                        branchId={branchData?.id}
+                        organizationId={branchData?.organization_id}
                     />
                 );
             case 'dashboard':

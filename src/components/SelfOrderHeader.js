@@ -8,6 +8,7 @@ function SelfOrderHeader({ branch, tableInfo, activeTab, setActiveTab, customerP
     // dengan alur baru: keranjang -> data pemesan -> pilih pembayaran -> (bukti/tunggu).
     const backTargetMap = {
         cart: 'menu',
+        my_orders: 'menu',
         order_form: 'cart',
         payment: 'order_form',
         payment_proof: 'payment',

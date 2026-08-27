@@ -34,8 +34,22 @@ function AttendanceManager({ branchId }) {
         }
     }, [branchId, selectedDate, fetchAttendances]);
 
+    const kioskUrl = branchId ? `${window.location.origin}/absensi?branch=${branchId}` : '';
+    const copyKioskUrl = () => {
+        navigator.clipboard.writeText(kioskUrl);
+        alert('Link absensi cabang ini disalin. Bagikan ke karyawan untuk absen mandiri (PIN + kamera + GPS).');
+    };
+
     return (
         <div className="space-y-6">
+            <div className="bg-isaji-navy/5 border border-isaji-navy/10 p-5 rounded-2xl flex flex-col md:flex-row justify-between md:items-center gap-3">
+                <div>
+                    <p className="text-xs font-extrabold text-isaji-navy uppercase tracking-widest">Link Absensi Mandiri (Kiosk)</p>
+                    <p className="text-sm text-gray-600 font-mono break-all mt-0.5">{kioskUrl}</p>
+                </div>
+                <button onClick={copyKioskUrl} className="shrink-0 px-4 py-2.5 rounded-xl bg-isaji-navy text-white text-xs font-bold">Salin Link</button>
+            </div>
+
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
                 <div>
                     <h3 className="text-xl font-black text-gray-900">Absensi & Shift Karyawan</h3>
@@ -65,12 +79,13 @@ function AttendanceManager({ branchId }) {
                                 <th className="px-6 py-4">Jam Pulang (Clock Out)</th>
                                 <th className="px-6 py-4">Terlambat</th>
                                 <th className="px-6 py-4">Potongan Keterlambatan</th>
+                                <th className="px-6 py-4">Foto Absen</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-50">
                             {attendances.length === 0 ? (
                                 <tr>
-                                    <td colSpan="6" className="px-6 py-12 text-center text-gray-400">
+                                    <td colSpan="7" className="px-6 py-12 text-center text-gray-400">
                                         Tidak ada catatan absensi pada tanggal {selectedDate}.
                                     </td>
                                 </tr>
@@ -98,6 +113,13 @@ function AttendanceManager({ branchId }) {
                                         </td>
                                         <td className="px-6 py-4 font-mono font-bold text-red-500">
                                             Rp {Number(att.deduction_amount || 0).toLocaleString('id-ID')}
+                                        </td>
+                                        <td className="px-6 py-4">
+                                            {att.clock_in_photo_url ? (
+                                                <a href={att.clock_in_photo_url} target="_blank" rel="noreferrer">
+                                                    <img src={att.clock_in_photo_url} alt="foto absen" className="w-10 h-10 rounded-lg object-cover border border-gray-200" />
+                                                </a>
+                                            ) : <span className="text-gray-300 text-xs">-</span>}
                                         </td>
                                     </tr>
                                 ))
