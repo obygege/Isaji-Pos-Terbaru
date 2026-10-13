@@ -21,6 +21,10 @@ import CustomerRegisterPage from './pages/customer/CustomerRegisterPage';
 // Import Halaman Kiosk Absensi Karyawan (Terpisah Total, PIN + GPS)
 import AttendanceKiosk from './employee/AttendanceKiosk';
 
+// Import Halaman Display Dapur & Barista (Terpisah Total, layar antrian pesanan)
+import KitchenDisplay from './employee/KitchenDisplay';
+import BaristaDisplay from './employee/BaristaDisplay';
+
 // Import Halaman Khusus Super Admin (Command Center)
 import SuperAdminLogin from './pages/superadmin/SuperAdminLogin';
 import SuperAdminDashboard from './pages/superadmin/SuperAdminDashboard';
@@ -31,6 +35,8 @@ function App() {
   const isCustomerLoginRoute = window.location.pathname.includes('/customer-login');
   const isCustomerRegisterRoute = window.location.pathname.includes('/customer-register');
   const isAttendanceKioskRoute = window.location.pathname.includes('/absensi');
+  const isKitchenRoute = window.location.pathname.includes('/kitchen');
+  const isBaristaRoute = window.location.pathname.includes('/barista');
 
   // Deteksi jalur Super Admin
   const isSuperAdminLoginRoute = window.location.pathname.includes('/isaji-command-center');
@@ -52,14 +58,14 @@ function App() {
   // Simpan halaman terakhir ke LocalStorage (Hanya untuk Dashboard/Owner)
   useEffect(() => {
     // Jangan simpan state jika sedang di halaman Pelanggan atau Super Admin
-    if (!isSelfOrderRoute && !isCustomerLoginRoute && !isCustomerRegisterRoute && !isAttendanceKioskRoute && !isSuperAdminLoginRoute && !isSuperAdminDashboardRoute) {
+    if (!isSelfOrderRoute && !isCustomerLoginRoute && !isCustomerRegisterRoute && !isAttendanceKioskRoute && !isKitchenRoute && !isBaristaRoute && !isSuperAdminLoginRoute && !isSuperAdminDashboardRoute) {
       localStorage.setItem('isajiActivePage', activePage);
     }
-  }, [activePage, isSelfOrderRoute, isCustomerLoginRoute, isCustomerRegisterRoute, isAttendanceKioskRoute, isSuperAdminLoginRoute, isSuperAdminDashboardRoute]);
+  }, [activePage, isSelfOrderRoute, isCustomerLoginRoute, isCustomerRegisterRoute, isAttendanceKioskRoute, isKitchenRoute, isBaristaRoute, isSuperAdminLoginRoute, isSuperAdminDashboardRoute]);
 
   useEffect(() => {
     // PENTING: Jika di jalur pelanggan, kiosk absensi, atau Super Admin, ABAIKAN logika Auth Supabase milik pegawai
-    if (isSelfOrderRoute || isCustomerLoginRoute || isCustomerRegisterRoute || isAttendanceKioskRoute || isSuperAdminLoginRoute || isSuperAdminDashboardRoute) return;
+    if (isSelfOrderRoute || isCustomerLoginRoute || isCustomerRegisterRoute || isAttendanceKioskRoute || isKitchenRoute || isBaristaRoute || isSuperAdminLoginRoute || isSuperAdminDashboardRoute) return;
 
     // Pengecekan sesi otomatis saat aplikasi dimuat ulang (Khusus Pegawai/Owner)
     supabase.auth.getSession().then(async ({ data: { session } }) => {
@@ -77,7 +83,7 @@ function App() {
     });
 
     return () => subscription.unsubscribe();
-  }, [activePage, isSelfOrderRoute, isCustomerLoginRoute, isCustomerRegisterRoute, isAttendanceKioskRoute, isSuperAdminLoginRoute, isSuperAdminDashboardRoute]);
+  }, [activePage, isSelfOrderRoute, isCustomerLoginRoute, isCustomerRegisterRoute, isAttendanceKioskRoute, isKitchenRoute, isBaristaRoute, isSuperAdminLoginRoute, isSuperAdminDashboardRoute]);
 
   // Fungsi pintar untuk mendeteksi apakah user adalah Owner atau Manajer
   // PERBAIKAN: dibungkus kunci isProcessingAuthRef supaya tidak bisa jalan dobel bersamaan.
@@ -166,6 +172,14 @@ function App() {
 
   if (isAttendanceKioskRoute) {
     return <AttendanceKiosk />;
+  }
+
+  if (isKitchenRoute) {
+    return <KitchenDisplay />;
+  }
+
+  if (isBaristaRoute) {
+    return <BaristaDisplay />;
   }
 
   // ==========================================
